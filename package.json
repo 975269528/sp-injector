@@ -1,0 +1,13 @@
+{
+  "name": "sp-injector",
+  "version": "1.0.0",
+  "description": "本地透明代理：拦截 ZCode/Anthropic 请求，改写 system 字段为可切换模板，响应原样透传。含 Web 面板。",
+  "main": "proxy.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node proxy.js",
+    "panel": "node proxy.js"
+  },
+  "keywords": ["anthropic", "claude", "proxy", "system-prompt", "injector"],
+  "license": "MIT"
+}
