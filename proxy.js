@@ -68,31 +68,27 @@ function wrapTemplate(text) {
 // 代理服务器（端口 8080）· 核心改写
 // ═══════════════════════════════════════════════════════════
 
-// 解析上游：有路由规则则按 model 路由（返回候选列表），无规则则用默认上游
-// 返回 { candidates, targetModel } 或 { error, code }
-// targetModel：命中的路由规则若配了，转发时用它改写请求体 model（精确映射）
+// 解析上游：按客户端 model 精确匹配映射表
+// 返回 { candidates:[{upstream, apiKey, targetModel}] } 或 { error, code }
+// 无映射命中 → 404（需先在面板配置模型映射）
 function resolveUpstream(body) {
   let model = "";
   try {
     const o = JSON.parse(body.toString("utf8"));
     model = o.model || "";
   } catch {}
-  const matched = cfg.matchRoute(model);
+  const matched = cfg.matchMapping(model);
   if (matched) {
     if (!matched.candidates.length) {
-      return { error: "route matched but no valid upstream: " + matched.route.upstreamId, code: 502 };
+      return { error: "mapping matched but no valid upstream for: " + model, code: 502 };
     }
-    return { candidates: matched.candidates, targetModel: matched.targetModel || "" };
+    return { candidates: matched.candidates };
   }
-  // 无路由规则时：若存在任何路由配置，则要求必须命中（拒绝）
-  if (cfg.getRoutes().length > 0) {
-    return {
-      error: `no route matched model "${model}". please add a route for this model.`,
-      code: 404,
-    };
-  }
-  // 完全没配路由 → 用默认上游（作为单一候选）
-  return { candidates: [{ upstream: cfg.getUpstream(), apiKey: "" }], targetModel: "" };
+  // 未命中映射：若已有映射配置，提示补配；若一条映射都没有，提示先配置
+  const hint = cfg.getModelMappings().length > 0
+    ? `no mapping for model "${model}". please add a mapping in the panel.`
+    : `no model mappings configured. please add upstreams and mappings in the panel first.`;
+  return { error: hint, code: 404 };
 }
 
 const proxyServer = http.createServer(async (req, res) => {
@@ -115,14 +111,6 @@ const proxyServer = http.createServer(async (req, res) => {
     });
   }
   if (reqPath === "/__state") {
-    const up = cfg.getUpstream();
-    const sysProxy = require("./lib/auth-proxy").detectSystemProxy();
-    const effProxy =
-      up.useProxy === "custom"
-        ? up.customProxyUrl || null
-        : up.useProxy === "auto"
-          ? sysProxy || null
-          : null;
     return sendJson(res, 200, {
       format: cfg.getFormat(),
       mode: cfg.getMode(),
@@ -130,8 +118,8 @@ const proxyServer = http.createServer(async (req, res) => {
       sectionsKeep: cfg.getSectionsKeep(),
       useHeader: cfg.getUseHeader(),
       captureOn: cfg.getCaptureOn(),
-      upstream: up,
-      effective_proxy: effProxy,
+      upstreamCount: cfg.getUpstreams().length,
+      mappingCount: cfg.getModelMappings().length,
       stats: log.stats(),
     });
   }
@@ -227,13 +215,8 @@ const proxyServer = http.createServer(async (req, res) => {
     console.log(`[${ts()}] official mode, captured+passthrough ${reqPath}`);
     const uOff = resolveUpstream(body);
     if (uOff.error) return sendJson(res, uOff.code || 502, { error: uOff.error });
-    // 模型映射：targetModel 有值则改写请求体 model
-    let offBody = body;
-    if (uOff.targetModel && obj.model !== uOff.targetModel) {
-      obj.model = uOff.targetModel;
-      offBody = Buffer.from(JSON.stringify(obj), "utf8");
-    }
-    return forward(req, offBody, res, uOff.candidates, (upstreamRes) => {
+    // 模型映射由 forward 层按各候选 targetModel 改写，这里原样转发 body
+    return forward(req, body, res, uOff.candidates, (upstreamRes) => {
       relayResponse(upstreamRes, res);
     });
   }
@@ -311,15 +294,12 @@ const proxyServer = http.createServer(async (req, res) => {
 
   applySystem(obj, finalText);
 
-  // 模型映射：在序列化前按命中规则的 targetModel 改写请求体 model
-  // 注意必须用原始 body 解析路由——此时 obj.model 仍是客户端原始名（路由匹配依据）
+  // 解析映射（用原始 body——此时 model 是客户端原始名，匹配依据）
+  // targetModel 改写由 forward 层按各候选处理，这里不改 obj.model
   const uInj = resolveUpstream(body);
   if (uInj.error) return sendJson(res, uInj.code || 502, { error: uInj.error });
-  if (uInj.targetModel && obj.model !== uInj.targetModel) {
-    obj.model = uInj.targetModel;
-  }
 
-  // 抓取：原始 system + 改写后 system（含保留章节）
+  // 抓取：原始 system + 改写后 system（含保留章节）。model 记客户端原始名
   if (cfg.getCaptureOn()) {
     capture.push({
       format: fmt2,
@@ -489,14 +469,6 @@ const panelServer = http.createServer(async (req, res) => {
 
   // GET /api/state
   if (method === "GET" && urlPath === "/api/state") {
-    const up = cfg.getUpstream();
-    const sysProxy = require("./lib/auth-proxy").detectSystemProxy();
-    const effProxy =
-      up.useProxy === "custom"
-        ? up.customProxyUrl || null
-        : up.useProxy === "auto"
-          ? sysProxy || null
-          : null;
     return sendJson(res, 200, {
       format: cfg.getFormat(),
       mode: cfg.getMode(),
@@ -504,41 +476,21 @@ const panelServer = http.createServer(async (req, res) => {
       sectionsKeep: cfg.getSectionsKeep(),
       useHeader: cfg.getUseHeader(),
       captureOn: cfg.getCaptureOn(),
-      upstream: up,
-      effective_proxy: effProxy,
+      upstreamCount: cfg.getUpstreams().length,
+      mappingCount: cfg.getModelMappings().length,
       stats: log.stats(),
     });
   }
 
-  // GET /api/upstream  读上游配置
-  if (method === "GET" && urlPath === "/api/upstream") {
-    return sendJson(res, 200, { upstream: cfg.getUpstream() });
+  // ── 上游池 ──
+  // GET /api/upstreams  读上游池（每个上游含自己的 apiKey + models）
+  if (method === "GET" && urlPath === "/api/upstreams") {
+    return sendJson(res, 200, { upstreams: cfg.getUpstreams() });
   }
 
-  // POST /api/upstream  存上游配置
-  if (method === "POST" && urlPath === "/api/upstream") {
-    try {
-      const body = await readBody(req);
-      const obj = JSON.parse(body.toString("utf8"));
-      const saved = cfg.setUpstream(obj || {});
-      return sendJson(res, 200, { ok: true, upstream: saved });
-    } catch (e) {
-      return sendJson(res, 400, { error: e.message });
-    }
-  }
-
-  // ── 路由配置 ──
-  // GET /api/routing  读上游池 + 路由规则
-  if (method === "GET" && urlPath === "/api/routing") {
-    return sendJson(res, 200, {
-      upstreams: cfg.getUpstreams(),
-      routes: cfg.getRoutes(),
-    });
-  }
-
-  // POST /api/routing/upstreams  {upstreams:[...], force?}  存整个上游池
+  // POST /api/upstreams  {upstreams:[...], force?}  存整个上游池
   // 保护：提交空数组但当前已有数据时，必须带 force:true（防误清空）
-  if (method === "POST" && urlPath === "/api/routing/upstreams") {
+  if (method === "POST" && urlPath === "/api/upstreams") {
     try {
       const body = await readBody(req);
       const obj = JSON.parse(body.toString("utf8"));
@@ -564,14 +516,46 @@ const panelServer = http.createServer(async (req, res) => {
     }
   }
 
-  // POST /api/routing/routes  {routes:[...], force?}  存整个路由规则
+  // POST /api/upstreams/:id/fetch-models  自动拉取该上游支持的模型列表
+  // 用上游已填的 apiKey 调其 OpenAI 兼容 /models 端点，返回模型列表
+  if ((m = urlPath.match(/^\/api\/upstreams\/([^/]+)\/fetch-models$/)) && method === "POST") {
+    try {
+      const id = dec(m[1]);
+      const up = cfg.getUpstreams().find((u) => u.id === id);
+      if (!up) return sendJson(res, 404, { error: "upstream not found: " + id });
+      if (!up.apiKey) return sendJson(res, 400, { error: "请先填写该上游的 API Key" });
+      const { fetchModels } = require("./lib/auth-proxy");
+      const result = await fetchModels(up);
+      // 拉取成功：把 models 写回该上游（合并保留旧 contextK）
+      const all = cfg.getUpstreams();
+      const idx = all.findIndex((u) => u.id === id);
+      const oldModels = (all[idx].models || []).filter(Boolean);
+      const merged = result.models.map((nm) => {
+        const old = oldModels.find((om) => om.name === nm.name);
+        return { name: nm.name, contextK: (old && old.contextK) || nm.contextK || null };
+      });
+      all[idx].models = merged;
+      cfg.setUpstreams(all);
+      return sendJson(res, 200, { ok: true, models: merged, count: merged.length });
+    } catch (e) {
+      return sendJson(res, 502, { error: "拉取失败: " + e.message });
+    }
+  }
+
+  // ── 模型映射表 ──
+  // GET /api/mappings  读映射表
+  if (method === "GET" && urlPath === "/api/mappings") {
+    return sendJson(res, 200, { mappings: cfg.getModelMappings() });
+  }
+
+  // POST /api/mappings  {mappings:[...], force?}  存整个映射表
   // 保护：提交空数组但当前已有数据时，必须带 force:true（防误清空）
-  if (method === "POST" && urlPath === "/api/routing/routes") {
+  if (method === "POST" && urlPath === "/api/mappings") {
     try {
       const body = await readBody(req);
       const obj = JSON.parse(body.toString("utf8"));
-      const incoming = obj.routes || [];
-      const existing = cfg.getRoutes();
+      const incoming = obj.mappings || [];
+      const existing = cfg.getModelMappings();
       if (
         incoming.length === 0 &&
         existing.length > 0 &&
@@ -581,12 +565,12 @@ const panelServer = http.createServer(async (req, res) => {
           error:
             "将清空 " +
             existing.length +
-            " 条路由规则。若确认，请带 force:true 重新提交。",
+            " 条映射。若确认，请带 force:true 重新提交。",
           count: existing.length,
         });
       }
-      const saved = cfg.setRoutes(incoming);
-      return sendJson(res, 200, { ok: true, routes: saved });
+      const saved = cfg.setModelMappings(incoming);
+      return sendJson(res, 200, { ok: true, mappings: saved });
     } catch (e) {
       return sendJson(res, 400, { error: e.message });
     }
@@ -745,18 +729,10 @@ proxyServer.listen(PORT_PROXY, "127.0.0.1", () => {
   console.log(`[sp-injector] 代理入口  : http://127.0.0.1:${PORT_PROXY}`);
 });
 panelServer.listen(PORT_PANEL, "127.0.0.1", () => {
-  const up = cfg.getUpstream();
-  const sysProxy = require("./lib/auth-proxy").detectSystemProxy();
-  const effProxy =
-    up.useProxy === "custom"
-      ? up.customProxyUrl || "直连"
-      : up.useProxy === "auto"
-        ? sysProxy || "直连"
-        : "直连";
   console.log(`[sp-injector] Web 面板  : http://127.0.0.1:${PORT_PANEL}`);
   console.log(`[sp-injector] 当前模板  : ${cfg.getActiveTemplates().join(" + ") || "(无)"} (${cfg.getMode()} 模式)`);
   console.log(
-    `[sp-injector] 上游      : ${up.host}:${up.port}${up.pathPrefix} (${effProxy})`,
+    `[sp-injector] 上游/映射 : ${cfg.getUpstreams().length} 个上游 / ${cfg.getModelMappings().length} 条映射`,
   );
   console.log(`[sp-injector] 上善若水 · 道法自然`);
 });

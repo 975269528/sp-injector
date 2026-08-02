@@ -18,15 +18,14 @@ spApp.views.overview = {
     // 状态 KV
     const at = s.activeTemplates || [];
     const keep = s.sectionsKeep || [];
-    const rt = await spApp.api.get("/api/routing").catch(() => ({ upstreams: [], routes: [] }));
-    const upCount = (rt.upstreams || []).length;
-    const routeCount = (rt.routes || []).length;
+    const ups = s.upstreamCount != null ? s.upstreamCount : 0;
+    const mms = s.mappingCount != null ? s.mappingCount : 0;
     $("overview-state").innerHTML = `
       <div class="row"><div class="k">注入模式</div><div class="v">${s.mode || "-"}</div></div>
       <div class="row"><div class="k">接口格式</div><div class="v">${s.format || "-"}</div></div>
       <div class="row"><div class="k">激活模板</div><div class="v">${at.length ? at.join(" + ") : "(无)"}</div></div>
       <div class="row"><div class="k">保留章节</div><div class="v">${keep.length ? keep.length + " 个" : "(无)"}</div></div>
-      <div class="row"><div class="k">路由配置</div><div class="v">${upCount} 上游 / ${routeCount} 规则</div></div>
+      <div class="row"><div class="k">上游/映射</div><div class="v">${ups} 上游 / ${mms} 映射</div></div>
       <div class="row"><div class="k">Scripture 头</div><div class="v">${s.useHeader ? "开" : "关"}</div></div>
     `;
   },

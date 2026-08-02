@@ -1,20 +1,30 @@
-// views/routing.js · 路由配置（上游池 + 路由规则）
+// views/routing.js · 上游池 + 模型映射（客户端名 → 上游真实模型）
 spApp.views = spApp.views || {};
 spApp.views.routing = {
   upstreams: [],
-  routes: [],
-  onEnter() { this.load(); },
-  async load() {
-    const data = await spApp.api.get("/api/routing").catch(() => ({ upstreams: [], routes: [] }));
-    this.upstreams = data.upstreams || [];
-    this.routes = data.routes || [];
-    this.renderUpstreams();
-    this.renderRoutes();
+  mappings: [],
+  onEnter() {
+    this.load();
   },
+  onLeave() {},
+  onState() {},
+  async load() {
+    const self = this;
+    const [upData, mmData] = await Promise.all([
+      spApp.api.get("/api/upstreams").catch(() => ({ upstreams: [] })),
+      spApp.api.get("/api/mappings").catch(() => ({ mappings: [] })),
+    ]);
+    self.upstreams = upData.upstreams || [];
+    self.mappings = mmData.mappings || [];
+    self.renderUpstreams();
+    self.renderMappings();
+  },
+  // ── 上游池表格 ───────────────────────────────────────────────
   renderUpstreams() {
+    const self = this;
     const tb = $("up-tbody");
     if (!this.upstreams.length) {
-      tb.innerHTML = '<tr><td colspan="7" class="muted center">暂无上游。点「+ 添加上游」。</td></tr>';
+      tb.innerHTML = '<tr><td colspan="8" class="muted center">暂无上游。点「+ 添加上游」。</td></tr>';
       return;
     }
     const proxyOpts = (val) =>
@@ -24,168 +34,201 @@ spApp.views.routing = {
             `<option value="${o}"${o === val ? " selected" : ""}>${o}${o === "auto" ? " · 系统代理" : o === "direct" ? " · 直连" : " · 指定"}</option>`,
         )
         .join("");
+    const q = (s) => esc(String(s == null ? "" : s)).replace(/"/g, "&quot;");
     tb.innerHTML = this.upstreams
       .map((u, i) => {
         const isCustom = (u.useProxy || "direct") === "custom";
+        const models = Array.isArray(u.models) ? u.models : [];
+        const modelHtml = models.length
+          ? `模型: ${models.map((m) => q(m && m.name)).join(", ")} <span class="muted">(${models.length}个)</span>`
+          : `<span class="muted">模型: (未拉取,点「拉取」)</span>`;
         return `
       <tr>
-        <td><input class="rt-input" data-u="${i}" data-k="name" value="${(u.name || "").replace(/"/g, "&quot;")}" style="width:100px" /></td>
-        <td><input class="rt-input" data-u="${i}" data-k="host" value="${u.host || ""}" style="width:160px" /></td>
-        <td><input class="rt-input" data-u="${i}" data-k="port" value="${u.port || 443}" style="width:60px" /></td>
-        <td><input class="rt-input" data-u="${i}" data-k="pathPrefix" value="${u.pathPrefix || ""}" style="width:110px" /></td>
+        <td><input class="rt-input" data-u="${i}" data-k="name" value="${q(u.name)}" style="width:100px" /></td>
+        <td><input class="rt-input" data-u="${i}" data-k="host" value="${q(u.host)}" style="width:160px" /></td>
+        <td><input class="rt-input" data-u="${i}" data-k="port" value="${q(u.port == null ? 443 : u.port)}" style="width:60px" /></td>
+        <td><input class="rt-input" data-u="${i}" data-k="pathPrefix" value="${q(u.pathPrefix)}" style="width:110px" /></td>
         <td><select class="rt-input rt-proxy" data-u="${i}" data-k="useProxy" style="width:120px">${proxyOpts(u.useProxy || "direct")}</select></td>
-        <td><input class="rt-input rt-proxy-url" data-u="${i}" data-k="customProxyUrl" value="${u.customProxyUrl || ""}" style="width:150px" placeholder="http://127.0.0.1:7890" ${isCustom ? "" : 'disabled style="display:none;width:150px"'} /></td>
-        <td><button class="btn btn-small btn-danger" data-u-del="${i}">删</button></td>
-      </tr>`;
+        <td><input class="rt-input rt-proxy-url" data-u="${i}" data-k="customProxyUrl" value="${q(u.customProxyUrl)}" style="width:150px" placeholder="http://127.0.0.1:7890"${isCustom ? "" : ' style="display:none;width:150px"'} /></td>
+        <td><input class="rt-input" data-u="${i}" data-k="apiKey" value="${q(u.apiKey)}" style="width:160px" placeholder="sk-..." type="password" /></td>
+        <td style="white-space:nowrap">
+          <button class="btn btn-small" data-fetch="${i}">拉取</button>
+          <button class="btn btn-small btn-danger" data-u-del="${i}">删</button>
+        </td>
+      </tr>
+      <tr><td colspan="8" class="up-models">${modelHtml}</td></tr>`;
       })
       .join("");
-    tb.querySelectorAll("[data-u-del]").forEach((b) => {
-      b.onclick = () => {
-        this.upstreams.splice(parseInt(b.dataset.uDel, 10), 1);
-        this.renderUpstreams();
-      };
-    });
-    // 普通输入
+
+    // 普通输入（除代理模式 select 外）
     tb.querySelectorAll(".rt-input[data-u]:not(.rt-proxy)").forEach((inp) => {
       inp.oninput = () => {
         const i = parseInt(inp.dataset.u, 10);
-        this.upstreams[i][inp.dataset.k] = inp.value;
+        self.upstreams[i][inp.dataset.k] = inp.value;
       };
     });
-    // 代理模式下拉联动
+    // 代理模式联动
     tb.querySelectorAll(".rt-proxy").forEach((sel) => {
       sel.onchange = () => {
         const i = parseInt(sel.dataset.u, 10);
-        this.upstreams[i][sel.dataset.k] = sel.value;
-        this.renderUpstreams(); // 重渲染以显示/隐藏 customProxyUrl
+        self.upstreams[i].useProxy = sel.value;
+        self.renderUpstreams(); // 重渲染以显示/隐藏 customProxyUrl
+      };
+    });
+    // 删除上游
+    tb.querySelectorAll("[data-u-del]").forEach((b) => {
+      b.onclick = () => {
+        self.upstreams.splice(parseInt(b.dataset.uDel, 10), 1);
+        self.renderUpstreams();
+      };
+    });
+    // 拉取模型
+    tb.querySelectorAll("[data-fetch]").forEach((b) => {
+      b.onclick = async () => {
+        const i = parseInt(b.dataset.fetch, 10);
+        const up = self.upstreams[i];
+        if (!up || !up.id) {
+          self.flash("上游缺少 id,请先保存", true);
+          return;
+        }
+        const oldText = b.textContent;
+        b.disabled = true;
+        b.textContent = "拉取中...";
+        try {
+          const r = await spApp.api.post(
+            `/api/upstreams/${encodeURIComponent(up.id)}/fetch-models`,
+          );
+          if (r && r.error) throw new Error(r.error);
+          self.flash(`拉取到 ${r.count} 个模型`);
+          await self.load(); // 后端已写回 models,重新加载
+        } catch (e) {
+          self.flash("拉取失败: " + (e.message || ""), true);
+        } finally {
+          b.disabled = false;
+          b.textContent = oldText;
+        }
       };
     });
   },
-  renderRoutes() {
-    const box = $("rt-list");
-    if (!this.routes.length) {
-      box.innerHTML = '<div class="rt-empty">暂无规则。不配规则时全部走默认上游。</div>';
+  // ── 模型映射 ─────────────────────────────────────────────────
+  renderMappings() {
+    const self = this;
+    const box = $("mm-list");
+    if (!this.mappings.length) {
+      box.innerHTML = '<div class="rt-empty">暂无映射。点「+ 添加映射」。</div>';
       return;
     }
-    const self = this;
+    const q = (s) => esc(String(s == null ? "" : s)).replace(/"/g, "&quot;");
     const upOpts = (selId) =>
       this.upstreams.length
         ? this.upstreams
-            .map((u) => `<option value="${u.id}"${u.id === selId ? " selected" : ""}>${u.name || u.id}</option>`)
+            .map((u) => `<option value="${q(u.id)}"${u.id === selId ? " selected" : ""}>${q(u.name || u.id)}</option>`)
             .join("")
         : '<option value="">(请先添加上游)</option>';
+    // 取某候选所选上游的 models[].name,作为 targetModel 软提示
+    const modelNamesOf = (upstreamId) => {
+      const up = this.upstreams.find((u) => u.id === upstreamId);
+      return Array.isArray(up && up.models)
+        ? up.models.map((m) => m && m.name).filter(Boolean)
+        : [];
+    };
 
-    box.innerHTML = this.routes
-      .map((r, ri) => {
-        const ups = Array.isArray(r.upstreams) && r.upstreams.length
-          ? r.upstreams
-          : r.upstreamId
-            ? [{ upstreamId: r.upstreamId, apiKey: r.apiKey || "" }]
-            : [];
-        // 兼容旧结构 → 迁移到新结构
-        r.upstreams = ups;
-        delete r.upstreamId;
-        delete r.apiKey;
-
-        const upsHtml = ups
-          .map((c, ui) => `
-            <div class="rt-up-row" draggable="true" data-r="${ri}" data-ui="${ui}">
+    box.innerHTML = this.mappings
+      .map((m, mi) => {
+        const ups = Array.isArray(m.upstreams) ? m.upstreams : [];
+        const upsHtml = ups.length
+          ? ups
+              .map((c, ci) => {
+                const names = modelNamesOf(c.upstreamId);
+                const dlOpts = names.map((n) => `<option value="${q(n)}">`).join("");
+                return `
+            <div class="rt-up-row" draggable="true" data-mi="${mi}" data-ci="${ci}">
               <span class="rt-drag" title="拖拽排序">⠿</span>
-              <span class="seq-mini">${ui + 1}</span>
-              <select class="rt-input rt-up-sel" data-r="${ri}" data-ui="${ui}" style="width:150px">${upOpts(c.upstreamId)}</select>
-              <input class="rt-input rt-up-key" data-r="${ri}" data-ui="${ui}" value="${(c.apiKey || "").replace(/"/g, "&quot;")}" style="width:200px" placeholder="sk-..." type="password" />
-              <button class="btn btn-small btn-danger" data-r="${ri}" data-ui-del="${ui}">删</button>
-            </div>`)
-          .join("");
-
-        // 聚合该规则候选上游的 models[].name，作为 targetModel 的软提示选项
-        const modelNames = Array.from(new Set(
-          ups.flatMap((c) => {
-            const up = this.upstreams.find((u) => u.id === c.upstreamId);
-            return Array.isArray(up && up.models) ? up.models.map((m) => m && m.name).filter(Boolean) : [];
-          })
-        ));
-        const dlOpts = modelNames.map((n) => `<option value="${n.replace(/"/g, "&quot;")}">`).join("");
+              <span class="seq-mini">${ci + 1}</span>
+              <select class="rt-input mm-up-sel" data-mi="${mi}" data-ci="${ci}" style="width:150px">${upOpts(c.upstreamId)}</select>
+              <input class="rt-input mm-target" data-mi="${mi}" data-ci="${ci}" list="dl-mm-${mi}-${ci}" value="${q(c.targetModel)}" style="width:200px" placeholder="(不改写,留空)" autocomplete="off" />
+              <datalist id="dl-mm-${mi}-${ci}">${dlOpts}</datalist>
+              <button class="btn btn-small btn-danger" data-mi="${mi}" data-ci-del="${ci}">删</button>
+            </div>`;
+              })
+              .join("")
+          : '<div class="rt-empty">无候选,点「+ 候选」添加</div>';
 
         return `
-          <div class="rt-rule">
-            <div class="rt-rule-head">
-              <span class="muted" style="font-size:11px;">前缀</span>
-              <input class="rt-input rt-prefix" data-r="${ri}" value="${(r.modelPrefix || "").replace(/"/g, "&quot;")}" style="width:200px" placeholder="如 GLM- / claude-" />
-              <span class="muted" style="font-size:11px;">映射到</span>
-              <input class="rt-input rt-target" data-r="${ri}" list="dl-models-${ri}" value="${(r.targetModel || "").replace(/"/g, "&quot;")}" style="width:180px" placeholder="(不改写,留空)" autocomplete="off" />
-              <datalist id="dl-models-${ri}">${dlOpts}</datalist>
-              <button class="btn btn-small" data-r-up-add="${ri}">+ 上游</button>
-              <button class="btn btn-small btn-danger rt-rule-del" data-r-del="${ri}">删规则</button>
-            </div>
-            <div class="rt-ups">${upsHtml || '<div class="rt-empty">无上游，点「+ 上游」添加</div>'}</div>
-          </div>`;
+        <div class="rt-rule">
+          <div class="rt-rule-head">
+            <span class="muted" style="font-size:11px;">客户端名</span>
+            <input class="rt-input mm-client" data-mi="${mi}" value="${q(m.clientModel)}" style="width:200px" placeholder="如 gpt-4o 或 glm-4.6" />
+            <button class="btn btn-small" data-mi-up-add="${mi}">+ 候选</button>
+            <button class="btn btn-small btn-danger rt-rule-del" data-mi-del="${mi}">删映射</button>
+          </div>
+          <div class="mm-ups">${upsHtml}</div>
+        </div>`;
       })
       .join("");
 
-    // modelPrefix
-    box.querySelectorAll(".rt-prefix").forEach((inp) => {
+    // 客户端名
+    box.querySelectorAll(".mm-client").forEach((inp) => {
       inp.oninput = () => {
-        self.routes[parseInt(inp.dataset.r, 10)].modelPrefix = inp.value;
+        self.mappings[parseInt(inp.dataset.mi, 10)].clientModel = inp.value;
       };
     });
-    // targetModel（模型映射：转发时改写请求体 model 为该值）
-    box.querySelectorAll(".rt-target").forEach((inp) => {
-      inp.oninput = () => {
-        self.routes[parseInt(inp.dataset.r, 10)].targetModel = inp.value;
-      };
-    });
-    // 上游选择/Key
-    box.querySelectorAll(".rt-up-sel").forEach((sel) => {
+    // 候选:上游选择(切换后 datalist 要跟随,重渲染)
+    box.querySelectorAll(".mm-up-sel").forEach((sel) => {
       sel.onchange = () => {
-        const ri = parseInt(sel.dataset.r, 10);
-        const ui = parseInt(sel.dataset.ui, 10);
-        self.routes[ri].upstreams[ui].upstreamId = sel.value;
+        const mi = parseInt(sel.dataset.mi, 10);
+        const ci = parseInt(sel.dataset.ci, 10);
+        self.mappings[mi].upstreams[ci].upstreamId = sel.value;
+        self.renderMappings();
       };
     });
-    box.querySelectorAll(".rt-up-key").forEach((inp) => {
+    // 候选:真实模型名
+    box.querySelectorAll(".mm-target").forEach((inp) => {
       inp.oninput = () => {
-        const ri = parseInt(inp.dataset.r, 10);
-        const ui = parseInt(inp.dataset.ui, 10);
-        self.routes[ri].upstreams[ui].apiKey = inp.value;
+        const mi = parseInt(inp.dataset.mi, 10);
+        const ci = parseInt(inp.dataset.ci, 10);
+        self.mappings[mi].upstreams[ci].targetModel = inp.value;
       };
     });
-    // 删上游
-    box.querySelectorAll("[data-ui-del]").forEach((b) => {
+    // 删候选
+    box.querySelectorAll("[data-ci-del]").forEach((b) => {
       b.onclick = () => {
-        const ri = parseInt(b.dataset.r, 10);
-        const ui = parseInt(b.dataset.uiDel, 10);
-        self.routes[ri].upstreams.splice(ui, 1);
-        self.renderRoutes();
+        const mi = parseInt(b.dataset.mi, 10);
+        const ci = parseInt(b.dataset.ciDel, 10);
+        self.mappings[mi].upstreams.splice(ci, 1);
+        self.renderMappings();
       };
     });
-    // 加上游
-    box.querySelectorAll("[data-r-up-add]").forEach((b) => {
+    // 加候选
+    box.querySelectorAll("[data-mi-up-add]").forEach((b) => {
       b.onclick = () => {
-        const ri = parseInt(b.dataset.rUpAdd, 10);
-        self.routes[ri].upstreams.push({ upstreamId: self.upstreams[0]?.id || "", apiKey: "" });
-        self.renderRoutes();
+        const mi = parseInt(b.dataset.miUpAdd, 10);
+        self.mappings[mi].upstreams.push({
+          upstreamId: (self.upstreams[0] && self.upstreams[0].id) || "",
+          targetModel: "",
+        });
+        self.renderMappings();
       };
     });
-    // 删规则
+    // 删映射
     box.querySelectorAll(".rt-rule-del").forEach((b) => {
       b.onclick = () => {
-        self.routes.splice(parseInt(b.dataset.rDel, 10), 1);
-        self.renderRoutes();
+        self.mappings.splice(parseInt(b.dataset.miDel, 10), 1);
+        self.renderMappings();
       };
     });
-    // 拖拽排序（同一规则内）
+    // 拖拽排序(同一映射内)
     this.bindDnD(box);
   },
-  // 拖拽：同一 rt-rule 内的 rt-up-row 排序
+  // 拖拽:同一 rt-rule 内的 rt-up-row 排序(数据在 mappings[mi].upstreams)
   bindDnD(box) {
     const self = this;
     let dragEl = null;
-    let dragRi = -1;
+    let dragMi = -1;
     box.querySelectorAll(".rt-up-row").forEach((row) => {
       row.addEventListener("dragstart", (e) => {
         dragEl = row;
-        dragRi = parseInt(row.dataset.r, 10);
+        dragMi = parseInt(row.dataset.mi, 10);
         row.classList.add("dragging");
         e.dataTransfer.effectAllowed = "move";
       });
@@ -195,9 +238,8 @@ spApp.views.routing = {
       });
       row.addEventListener("dragover", (e) => {
         e.preventDefault();
-        if (!dragEl || parseInt(row.dataset.r, 10) !== dragRi) return;
+        if (!dragEl || parseInt(row.dataset.mi, 10) !== dragMi) return;
         if (row === dragEl) return;
-        // 在被拖元素前/后插入指示
         const rect = row.getBoundingClientRect();
         const after = e.clientY > rect.top + rect.height / 2;
         box.querySelectorAll(".rt-up-row").forEach((r) => r.classList.remove("drag-over"));
@@ -206,21 +248,24 @@ spApp.views.routing = {
       });
       row.addEventListener("drop", (e) => {
         e.preventDefault();
-        if (!dragEl || parseInt(row.dataset.r, 10) !== dragRi || row === dragEl) return;
-        const fromUi = parseInt(dragEl.dataset.ui, 10);
-        let toUi = parseInt(row.dataset.ui, 10);
-        const ups = self.routes[dragRi].upstreams;
-        const [moved] = ups.splice(fromUi, 1);
-        // 调整目标索引（删除后偏移）
-        if (fromUi < toUi) toUi--;
-        if (row._after) toUi++;
-        ups.splice(toUi, 0, moved);
-        self.renderRoutes();
+        if (!dragEl || parseInt(row.dataset.mi, 10) !== dragMi || row === dragEl) return;
+        const fromCi = parseInt(dragEl.dataset.ci, 10);
+        let toCi = parseInt(row.dataset.ci, 10);
+        const ups = self.mappings[dragMi].upstreams;
+        const [moved] = ups.splice(fromCi, 1);
+        // 删除后偏移修正
+        if (fromCi < toCi) toCi--;
+        if (row._after) toCi++;
+        ups.splice(toCi, 0, moved);
+        self.renderMappings();
       });
     });
   },
   newId() {
     return "u" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+  },
+  mmId() {
+    return "m_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
   },
   flash(msg, err) {
     const el = $("routing-status");
@@ -239,17 +284,23 @@ spApp.views.routing = {
         pathPrefix: "",
         useProxy: "direct",
         customProxyUrl: "",
+        apiKey: "",
+        models: [],
       });
       self.renderUpstreams();
     };
-    $("btn-rt-add").onclick = () => {
-      self.routes.push({
-        id: self.newId(),
-        modelPrefix: "",
-        targetModel: "",
-        upstreams: [{ upstreamId: self.upstreams[0]?.id || "", apiKey: "" }],
+    $("btn-mm-add").onclick = () => {
+      self.mappings.push({
+        id: self.mmId(),
+        clientModel: "",
+        upstreams: [
+          {
+            upstreamId: (self.upstreams[0] && self.upstreams[0].id) || "",
+            targetModel: "",
+          },
+        ],
       });
-      self.renderRoutes();
+      self.renderMappings();
     };
     const saveOne = async (path, key, list) => {
       // 先不带 force 试
@@ -259,9 +310,9 @@ spApp.views.routing = {
         body: JSON.stringify({ [key]: list }),
       });
       if (r.status === 409) {
-        // 触发保护：弹确认
+        // 触发保护:弹确认
         const data = await r.json().catch(() => ({}));
-        if (!confirm(data.error || "将清空配置，确认？")) {
+        if (!confirm(data.error || "将清空配置,确认?")) {
           throw new Error("cancel");
         }
         // 带 force 重试
@@ -276,10 +327,10 @@ spApp.views.routing = {
     };
     $("btn-routing-save").onclick = async () => {
       try {
-        await saveOne("/api/routing/upstreams", "upstreams", self.upstreams);
-        await saveOne("/api/routing/routes", "routes", self.routes);
+        await saveOne("/api/upstreams", "upstreams", self.upstreams);
+        await saveOne("/api/mappings", "mappings", self.mappings);
         await self.load();
-        self.flash("已保存，立即生效");
+        self.flash("已保存,立即生效");
       } catch (e) {
         if (e.message === "cancel") self.flash("已取消", true);
         else self.flash("保存失败", true);

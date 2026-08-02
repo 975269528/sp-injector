@@ -120,32 +120,31 @@
           </div>
         </section>
 
-        <!-- 路由 -->
+        <!-- 上游池 + 模型映射 -->
         <section class="view" id="view-routing">
           <div class="card">
             <div class="card-head">
-              <h3>上游池 <span class="muted" style="font-size:11px;">(命名的上游，供路由引用)</span></h3>
+              <h3>上游池 <span class="muted" style="font-size:11px;">(每个上游绑定自己的 Key + 模型列表)</span></h3>
               <button id="btn-up-add" class="btn btn-small">+ 添加上游</button>
             </div>
             <table class="cap-table">
               <thead>
-                <tr><th>名称</th><th>域名</th><th>端口</th><th>路径前缀</th><th>代理模式</th><th>代理URL(custom时)</th><th></th></tr>
+                <tr><th>名称</th><th>域名</th><th>端口</th><th>路径前缀</th><th>代理模式</th><th>代理URL</th><th>API Key</th><th>操作</th></tr>
               </thead>
               <tbody id="up-tbody"></tbody>
             </table>
-            <p class="hint">注意：配了路由规则后，请求按 model 前缀匹配路由；没命中规则的请求会被拒绝（返回错误）。不配任何规则则全部走「上游」视图的默认上游。</p>
+            <p class="hint">每个上游绑定自己的 API Key（转发时用此 Key 认证）。点「拉取」按钮自动调用该上游的 <code>/models</code> 端点获取支持的模型列表（OpenAI 兼容协议，GLM/DeepSeek 等均支持）；拉取失败可手动在下方「模型」区编辑。</p>
           </div>
           <div class="card">
             <div class="card-head">
-              <h3>路由规则 <span class="muted" style="font-size:11px;">(model 前缀 → 有序上游列表，故障转移)</span></h3>
-              <button id="btn-rt-add" class="btn btn-small">+ 添加规则</button>
+              <h3>模型映射 <span class="muted" style="font-size:11px;">(客户端 model 名 → 指定上游 + 真实模型名，精确匹配)</span></h3>
+              <button id="btn-mm-add" class="btn btn-small">+ 添加映射</button>
             </div>
-            <div id="rt-list" class="rt-list"></div>
-            <p class="hint">请求的 model 以「模型前缀」开头即命中（取最长前缀）。同规则的上游按顺序逐个尝试，连接失败/401/403/429/5xx 自动切下一个。拖拽「⠿」调整顺序。</p>
-            <p class="hint"><b>模型映射</b>：「映射到」填写后，转发时会把请求体的 model 改写成该值（实现客户端自定义名 → 上游真实模型名）；留空则原样转发。前缀填成与客户端 model 完全相等即为<b>精确匹配</b>，因前缀越长优先级越高，会自动优先于宽泛的前缀规则。响应里的 model 原样回传，不反向改写。</p>
+            <div id="mm-list" class="rt-list"></div>
+            <p class="hint">客户端发的 <code>model</code> 精确等于「客户端名」即命中。每条映射可配多个候选上游，按顺序逐个尝试，连接失败/401/403/429/5xx 自动切下一个。「真实模型名」填写后转发时把请求体 model 改写成它（实现自定义名 → 上游真实模型名）；留空则原样转发。拖拽「⠿」调整候选顺序。未命中的请求会被拒绝（需先配映射）。</p>
           </div>
           <div class="editor-actions">
-            <button id="btn-routing-save" class="btn btn-primary">保存路由配置</button>
+            <button id="btn-routing-save" class="btn btn-primary">保存配置</button>
             <span id="routing-status" class="muted"></span>
           </div>
         </section>
