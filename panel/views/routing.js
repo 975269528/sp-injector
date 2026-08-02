@@ -134,10 +134,11 @@ spApp.views.routing = {
     box.innerHTML = this.mappings
       .map((m, mi) => {
         const ups = Array.isArray(m.upstreams) ? m.upstreams : [];
-        // 注入模式下拉：留空(全局) + replace/prepend/official/keepSections
+        // 注入模式下拉：留空(全局) + replace/prepend/official/keepSections（显示中文，value 保留英文供后端校验）
+        const MODE_LABELS = { "": "(用全局)", replace: "替换", prepend: "前置", official: "原样透传", keepSections: "保留章节" };
         const modeOpts = (val) =>
           ["", "replace", "prepend", "official", "keepSections"]
-            .map((o) => `<option value="${o}"${o === (val || "") ? " selected" : ""}>${o === "" ? "(全局)" : o}</option>`)
+            .map((o) => `<option value="${o}"${o === (val || "") ? " selected" : ""}>${MODE_LABELS[o] || o}</option>`)
             .join("");
         const upsHtml = ups.length
           ? ups
