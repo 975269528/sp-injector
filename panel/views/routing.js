@@ -98,11 +98,23 @@ spApp.views.routing = {
             </div>`)
           .join("");
 
+        // 聚合该规则候选上游的 models[].name，作为 targetModel 的软提示选项
+        const modelNames = Array.from(new Set(
+          ups.flatMap((c) => {
+            const up = this.upstreams.find((u) => u.id === c.upstreamId);
+            return Array.isArray(up && up.models) ? up.models.map((m) => m && m.name).filter(Boolean) : [];
+          })
+        ));
+        const dlOpts = modelNames.map((n) => `<option value="${n.replace(/"/g, "&quot;")}">`).join("");
+
         return `
           <div class="rt-rule">
             <div class="rt-rule-head">
               <span class="muted" style="font-size:11px;">前缀</span>
               <input class="rt-input rt-prefix" data-r="${ri}" value="${(r.modelPrefix || "").replace(/"/g, "&quot;")}" style="width:200px" placeholder="如 GLM- / claude-" />
+              <span class="muted" style="font-size:11px;">映射到</span>
+              <input class="rt-input rt-target" data-r="${ri}" list="dl-models-${ri}" value="${(r.targetModel || "").replace(/"/g, "&quot;")}" style="width:180px" placeholder="(不改写,留空)" autocomplete="off" />
+              <datalist id="dl-models-${ri}">${dlOpts}</datalist>
               <button class="btn btn-small" data-r-up-add="${ri}">+ 上游</button>
               <button class="btn btn-small btn-danger rt-rule-del" data-r-del="${ri}">删规则</button>
             </div>
@@ -115,6 +127,12 @@ spApp.views.routing = {
     box.querySelectorAll(".rt-prefix").forEach((inp) => {
       inp.oninput = () => {
         self.routes[parseInt(inp.dataset.r, 10)].modelPrefix = inp.value;
+      };
+    });
+    // targetModel（模型映射：转发时改写请求体 model 为该值）
+    box.querySelectorAll(".rt-target").forEach((inp) => {
+      inp.oninput = () => {
+        self.routes[parseInt(inp.dataset.r, 10)].targetModel = inp.value;
       };
     });
     // 上游选择/Key
@@ -228,6 +246,7 @@ spApp.views.routing = {
       self.routes.push({
         id: self.newId(),
         modelPrefix: "",
+        targetModel: "",
         upstreams: [{ upstreamId: self.upstreams[0]?.id || "", apiKey: "" }],
       });
       self.renderRoutes();

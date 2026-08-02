@@ -69,7 +69,8 @@ function wrapTemplate(text) {
 // ═══════════════════════════════════════════════════════════
 
 // 解析上游：有路由规则则按 model 路由（返回候选列表），无规则则用默认上游
-// 返回 { candidates: [{upstream, apiKey}] } 或 { error, code }
+// 返回 { candidates, targetModel } 或 { error, code }
+// targetModel：命中的路由规则若配了，转发时用它改写请求体 model（精确映射）
 function resolveUpstream(body) {
   let model = "";
   try {
@@ -81,7 +82,7 @@ function resolveUpstream(body) {
     if (!matched.candidates.length) {
       return { error: "route matched but no valid upstream: " + matched.route.upstreamId, code: 502 };
     }
-    return { candidates: matched.candidates };
+    return { candidates: matched.candidates, targetModel: matched.targetModel || "" };
   }
   // 无路由规则时：若存在任何路由配置，则要求必须命中（拒绝）
   if (cfg.getRoutes().length > 0) {
@@ -91,7 +92,7 @@ function resolveUpstream(body) {
     };
   }
   // 完全没配路由 → 用默认上游（作为单一候选）
-  return { candidates: [{ upstream: cfg.getUpstream(), apiKey: "" }] };
+  return { candidates: [{ upstream: cfg.getUpstream(), apiKey: "" }], targetModel: "" };
 }
 
 const proxyServer = http.createServer(async (req, res) => {
@@ -210,6 +211,7 @@ const proxyServer = http.createServer(async (req, res) => {
   const origPrev = log.previewSystem(originalSystem);
 
   // official 模式：抓取原始 system 后原样透传（最有价值：能看到官方原文）
+  // 注意：official 不注入 system，但路由与模型映射能力仍生效
   if (mode === "official") {
     if (cfg.getCaptureOn()) {
       capture.push({
@@ -225,7 +227,13 @@ const proxyServer = http.createServer(async (req, res) => {
     console.log(`[${ts()}] official mode, captured+passthrough ${reqPath}`);
     const uOff = resolveUpstream(body);
     if (uOff.error) return sendJson(res, uOff.code || 502, { error: uOff.error });
-    return forward(req, body, res, uOff.candidates, (upstreamRes) => {
+    // 模型映射：targetModel 有值则改写请求体 model
+    let offBody = body;
+    if (uOff.targetModel && obj.model !== uOff.targetModel) {
+      obj.model = uOff.targetModel;
+      offBody = Buffer.from(JSON.stringify(obj), "utf8");
+    }
+    return forward(req, offBody, res, uOff.candidates, (upstreamRes) => {
       relayResponse(upstreamRes, res);
     });
   }
@@ -303,6 +311,14 @@ const proxyServer = http.createServer(async (req, res) => {
 
   applySystem(obj, finalText);
 
+  // 模型映射：在序列化前按命中规则的 targetModel 改写请求体 model
+  // 注意必须用原始 body 解析路由——此时 obj.model 仍是客户端原始名（路由匹配依据）
+  const uInj = resolveUpstream(body);
+  if (uInj.error) return sendJson(res, uInj.code || 502, { error: uInj.error });
+  if (uInj.targetModel && obj.model !== uInj.targetModel) {
+    obj.model = uInj.targetModel;
+  }
+
   // 抓取：原始 system + 改写后 system（含保留章节）
   if (cfg.getCaptureOn()) {
     capture.push({
@@ -338,8 +354,6 @@ const proxyServer = http.createServer(async (req, res) => {
     `[${ts()}] inject ${reqPath} fmt=${fmt2} mode=${mode} tpl=${tplNames}(${merged.length}字,${tplTexts.length}个) system ${origPrev.len}→${newPrev.len}字${keptInfo}`,
   );
 
-  const uInj = resolveUpstream(newBody);
-  if (uInj.error) return sendJson(res, uInj.code || 502, { error: uInj.error });
   forward(req, newBody, res, uInj.candidates, (upstreamRes) => {
     relayResponse(upstreamRes, res);
   });

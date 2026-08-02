@@ -142,6 +142,7 @@
             </div>
             <div id="rt-list" class="rt-list"></div>
             <p class="hint">请求的 model 以「模型前缀」开头即命中（取最长前缀）。同规则的上游按顺序逐个尝试，连接失败/401/403/429/5xx 自动切下一个。拖拽「⠿」调整顺序。</p>
+            <p class="hint"><b>模型映射</b>：「映射到」填写后，转发时会把请求体的 model 改写成该值（实现客户端自定义名 → 上游真实模型名）；留空则原样转发。前缀填成与客户端 model 完全相等即为<b>精确匹配</b>，因前缀越长优先级越高，会自动优先于宽泛的前缀规则。响应里的 model 原样回传，不反向改写。</p>
           </div>
           <div class="editor-actions">
             <button id="btn-routing-save" class="btn btn-primary">保存路由配置</button>

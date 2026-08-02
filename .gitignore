@@ -3,3 +3,5 @@ state/
 *.log
 .DS_Store
 nul
+.zcode/
+.playwright-mcp/
