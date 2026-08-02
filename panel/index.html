@@ -129,7 +129,7 @@
             </div>
             <table class="cap-table">
               <thead>
-                <tr><th>名称</th><th>域名</th><th>端口</th><th>路径前缀</th><th>代理模式</th><th>代理URL</th><th>API Key</th><th>操作</th></tr>
+                <tr><th>名称</th><th>域名</th><th>端口</th><th>路径前缀</th><th>代理</th><th>模型路径</th><th>API Key</th><th>操作</th></tr>
               </thead>
               <tbody id="up-tbody"></tbody>
             </table>
@@ -141,7 +141,7 @@
               <button id="btn-mm-add" class="btn btn-small">+ 添加映射</button>
             </div>
             <div id="mm-list" class="rt-list"></div>
-            <p class="hint">客户端发的 <code>model</code> 精确等于「客户端名」即命中。每条映射可配多个候选上游，按顺序逐个尝试，连接失败/401/403/429/5xx 自动切下一个。「真实模型名」填写后转发时把请求体 model 改写成它（实现自定义名 → 上游真实模型名）；留空则原样转发。拖拽「⠿」调整候选顺序。未命中的请求会被拒绝（需先配映射）。</p>
+            <p class="hint">客户端发的 <code>model</code> 精确等于「客户端名」即命中。每条映射可单独设置注入模式（留空则用全局模式）。每条映射可配多个候选上游，按顺序逐个尝试，连接失败/401/403/429/5xx 自动切下一个。「真实模型名」填写后转发时把请求体 model 改写成它；留空则原样转发。拖拽「⠿」调整候选顺序。未命中的请求会被拒绝（需先配映射）。</p>
           </div>
           <div class="editor-actions">
             <button id="btn-routing-save" class="btn btn-primary">保存配置</button>

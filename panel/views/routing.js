@@ -28,16 +28,15 @@ spApp.views.routing = {
       return;
     }
     const proxyOpts = (val) =>
-      ["auto", "direct", "custom"]
+      ["auto", "direct"]
         .map(
           (o) =>
-            `<option value="${o}"${o === val ? " selected" : ""}>${o}${o === "auto" ? " · 系统代理" : o === "direct" ? " · 直连" : " · 指定"}</option>`,
+            `<option value="${o}"${o === val ? " selected" : ""}>${o}${o === "auto" ? " · 系统代理" : " · 直连"}</option>`,
         )
         .join("");
     const q = (s) => esc(String(s == null ? "" : s)).replace(/"/g, "&quot;");
     tb.innerHTML = this.upstreams
       .map((u, i) => {
-        const isCustom = (u.useProxy || "direct") === "custom";
         const models = Array.isArray(u.models) ? u.models : [];
         const modelHtml = models.length
           ? `模型: ${models.map((m) => q(m && m.name)).join(", ")} <span class="muted">(${models.length}个)</span>`
@@ -48,8 +47,8 @@ spApp.views.routing = {
         <td><input class="rt-input" data-u="${i}" data-k="host" value="${q(u.host)}" style="width:160px" /></td>
         <td><input class="rt-input" data-u="${i}" data-k="port" value="${q(u.port == null ? 443 : u.port)}" style="width:60px" /></td>
         <td><input class="rt-input" data-u="${i}" data-k="pathPrefix" value="${q(u.pathPrefix)}" style="width:110px" /></td>
-        <td><select class="rt-input rt-proxy" data-u="${i}" data-k="useProxy" style="width:120px">${proxyOpts(u.useProxy || "direct")}</select></td>
-        <td><input class="rt-input rt-proxy-url" data-u="${i}" data-k="customProxyUrl" value="${q(u.customProxyUrl)}" style="width:150px" placeholder="http://127.0.0.1:7890"${isCustom ? "" : ' style="display:none;width:150px"'} /></td>
+        <td><select class="rt-input rt-proxy" data-u="${i}" data-k="useProxy" style="width:110px">${proxyOpts(u.useProxy || "direct")}</select></td>
+        <td><input class="rt-input" data-u="${i}" data-k="modelsPath" value="${q(u.modelsPath || "/models")}" style="width:110px" placeholder="/models" /></td>
         <td><input class="rt-input" data-u="${i}" data-k="apiKey" value="${q(u.apiKey)}" style="width:160px" placeholder="sk-..." type="password" /></td>
         <td style="white-space:nowrap">
           <button class="btn btn-small" data-fetch="${i}">拉取</button>
@@ -67,12 +66,11 @@ spApp.views.routing = {
         self.upstreams[i][inp.dataset.k] = inp.value;
       };
     });
-    // 代理模式联动
+    // 代理模式（已无 custom，不再联动显隐，但仍写入 useProxy 字段）
     tb.querySelectorAll(".rt-proxy").forEach((sel) => {
       sel.onchange = () => {
         const i = parseInt(sel.dataset.u, 10);
         self.upstreams[i].useProxy = sel.value;
-        self.renderUpstreams(); // 重渲染以显示/隐藏 customProxyUrl
       };
     });
     // 删除上游
@@ -136,6 +134,11 @@ spApp.views.routing = {
     box.innerHTML = this.mappings
       .map((m, mi) => {
         const ups = Array.isArray(m.upstreams) ? m.upstreams : [];
+        // 注入模式下拉：留空(全局) + replace/prepend/official/keepSections
+        const modeOpts = (val) =>
+          ["", "replace", "prepend", "official", "keepSections"]
+            .map((o) => `<option value="${o}"${o === (val || "") ? " selected" : ""}>${o === "" ? "(全局)" : o}</option>`)
+            .join("");
         const upsHtml = ups.length
           ? ups
               .map((c, ci) => {
@@ -159,6 +162,8 @@ spApp.views.routing = {
           <div class="rt-rule-head">
             <span class="muted" style="font-size:11px;">客户端名</span>
             <input class="rt-input mm-client" data-mi="${mi}" value="${q(m.clientModel)}" style="width:200px" placeholder="如 gpt-4o 或 glm-4.6" />
+            <span class="muted" style="font-size:11px;">注入模式</span>
+            <select class="rt-input mm-mode" data-mi="${mi}" style="width:120px">${modeOpts(m.mode)}</select>
             <button class="btn btn-small" data-mi-up-add="${mi}">+ 候选</button>
             <button class="btn btn-small btn-danger rt-rule-del" data-mi-del="${mi}">删映射</button>
           </div>
@@ -171,6 +176,12 @@ spApp.views.routing = {
     box.querySelectorAll(".mm-client").forEach((inp) => {
       inp.oninput = () => {
         self.mappings[parseInt(inp.dataset.mi, 10)].clientModel = inp.value;
+      };
+    });
+    // 注入模式（覆盖全局，留空表示用全局）
+    box.querySelectorAll(".mm-mode").forEach((sel) => {
+      sel.onchange = () => {
+        self.mappings[parseInt(sel.dataset.mi, 10)].mode = sel.value;
       };
     });
     // 候选:上游选择(切换后 datalist 要跟随,重渲染)
@@ -283,7 +294,7 @@ spApp.views.routing = {
         port: 443,
         pathPrefix: "",
         useProxy: "direct",
-        customProxyUrl: "",
+        modelsPath: "/models",
         apiKey: "",
         models: [],
       });
@@ -293,6 +304,7 @@ spApp.views.routing = {
       self.mappings.push({
         id: self.mmId(),
         clientModel: "",
+        mode: "",
         upstreams: [
           {
             upstreamId: (self.upstreams[0] && self.upstreams[0].id) || "",

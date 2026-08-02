@@ -69,7 +69,8 @@ function wrapTemplate(text) {
 // ═══════════════════════════════════════════════════════════
 
 // 解析上游：按客户端 model 精确匹配映射表
-// 返回 { candidates:[{upstream, apiKey, targetModel}] } 或 { error, code }
+// 返回 { candidates:[{upstream, apiKey, targetModel}], effectiveMode } 或 { error, code }
+// effectiveMode：映射自带 mode 优先，否则 undefined（调用方回退全局 mode）
 // 无映射命中 → 404（需先在面板配置模型映射）
 function resolveUpstream(body) {
   let model = "";
@@ -82,7 +83,7 @@ function resolveUpstream(body) {
     if (!matched.candidates.length) {
       return { error: "mapping matched but no valid upstream for: " + model, code: 502 };
     }
-    return { candidates: matched.candidates };
+    return { candidates: matched.candidates, effectiveMode: matched.mapping.mode || "" };
   }
   // 未命中映射：若已有映射配置，提示补配；若一条映射都没有，提示先配置
   const hint = cfg.getModelMappings().length > 0
@@ -167,7 +168,13 @@ const proxyServer = http.createServer(async (req, res) => {
     });
   }
 
-  const mode = cfg.getMode();
+  // 解析映射（提前一次，贯穿后续分支复用）：用原始 body，此时 model 是客户端原始名（匹配依据）
+  // targetModel 改写由 forward 层按各候选处理
+  const resolved = resolveUpstream(body);
+  if (resolved.error) return sendJson(res, resolved.code || 502, { error: resolved.error });
+
+  // 注入模式：映射自带 mode 优先，否则用全局 mode
+  const mode = resolved.effectiveMode || cfg.getMode();
 
   // 取原始 system（按格式不同位置）· 在 official 判断之前先取，供抓取用
   const fmt2 = cfg.getFormat();
@@ -213,10 +220,8 @@ const proxyServer = http.createServer(async (req, res) => {
       });
     }
     console.log(`[${ts()}] official mode, captured+passthrough ${reqPath}`);
-    const uOff = resolveUpstream(body);
-    if (uOff.error) return sendJson(res, uOff.code || 502, { error: uOff.error });
-    // 模型映射由 forward 层按各候选 targetModel 改写，这里原样转发 body
-    return forward(req, body, res, uOff.candidates, (upstreamRes) => {
+    // resolved 已在前面解析完毕，模型映射由 forward 层按各候选 targetModel 改写
+    return forward(req, body, res, resolved.candidates, (upstreamRes) => {
       relayResponse(upstreamRes, res);
     });
   }
@@ -294,10 +299,7 @@ const proxyServer = http.createServer(async (req, res) => {
 
   applySystem(obj, finalText);
 
-  // 解析映射（用原始 body——此时 model 是客户端原始名，匹配依据）
-  // targetModel 改写由 forward 层按各候选处理，这里不改 obj.model
-  const uInj = resolveUpstream(body);
-  if (uInj.error) return sendJson(res, uInj.code || 502, { error: uInj.error });
+  // resolved 已在前面解析完毕；targetModel 改写由 forward 层按各候选处理
 
   // 抓取：原始 system + 改写后 system（含保留章节）。model 记客户端原始名
   if (cfg.getCaptureOn()) {
@@ -334,7 +336,7 @@ const proxyServer = http.createServer(async (req, res) => {
     `[${ts()}] inject ${reqPath} fmt=${fmt2} mode=${mode} tpl=${tplNames}(${merged.length}字,${tplTexts.length}个) system ${origPrev.len}→${newPrev.len}字${keptInfo}`,
   );
 
-  forward(req, newBody, res, uInj.candidates, (upstreamRes) => {
+  forward(req, newBody, res, resolved.candidates, (upstreamRes) => {
     relayResponse(upstreamRes, res);
   });
 });
