@@ -13,7 +13,7 @@
    - `git add -f state/` 或以任何方式绕过 .gitignore 提交 state/ 内容
    - 删除或修改 `.gitignore` 中的 `state/`、`dist/`、`.mimosa/` 规则
    - 在日志(`state/*.log`)、面板接口响应、错误信息、README 中输出完整 key
-3. **每次提交前**必须对暂存区跑密钥扫描,零命中才允许提交:
+3. **每次提交前**必须对暂存区跑下方的安全扫描,零命中才允许提交:
    ```bash
    git grep --cached -nE "sk-[A-Za-z0-9_-]{16,}|sk-ant-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|\"apiKey\"[ ]*:[ ]*\"[^\"]{16,}\"" -- . ':(exclude)package-lock.json'
    ```
@@ -25,7 +25,7 @@
 - 中文 conventional commits,格式 `type(scope): 描述`,参考 `git log` 既有风格。
 - 提交作者邮箱保持 GitHub noreply(仓库级 `user.email` 已配好),不要改回真实邮箱。
 - 提交会经过 Mimosa 预提交钩子扫描;已知误报见下节,误报时做最小改动绕开,不要去"修复"不存在的漏洞。
-- 推送前确认:`git status` 干净 + 密钥扫描通过。远程是**私有**仓库;转公开前必须经用户确认并复核全部历史提交。
+- 推送前确认:`git status` 干净且上方安全扫描零命中。远程是**私有**仓库;转公开前必须经用户确认并复核全部历史提交。
 
 ## 三、Mimosa 钩子已知误报(本项目实证)
 
