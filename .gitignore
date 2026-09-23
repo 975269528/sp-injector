@@ -5,3 +5,9 @@ state/
 nul
 .zcode/
 .playwright-mcp/
+
+# 构建产物(electron-builder 输出)
+dist/
+
+# Mimosa 安全扫描历史
+.mimosa/

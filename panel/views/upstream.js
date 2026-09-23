@@ -36,7 +36,7 @@ spApp.views.upstream = {
       keep
         .map(
           (title, i) =>
-            `<span class="sb-item"><span class="sb-seq">${i + 1}</span><span class="sb-title">${title}</span><button class="sb-del" data-title="${title.replace(/"/g, "&quot;")}" title="删除">✕</button></span>`,
+            `<span class="sb-item"><span class="sb-seq">${i + 1}</span><span class="sb-title">${title}</span><button class="sb-del" data-title="${title.replace(/"/g, "&quot;")}" title="删除">${spApp.icon("close", 11)}</button></span>`,
         )
         .join("") +
       `</div>`;
@@ -93,14 +93,9 @@ spApp.views.upstream = {
     await spApp.loadState();
     this.toast("保留章节已保存");
   },
-  // 轻量提示：用 captures 视图若存在则复用，否则用顶部 run-text 闪现
+  // 轻量提示:全局 toast
   toast(msg) {
-    const el = $("routing-status") || $("cap-count");
-    if (el) {
-      const old = el.textContent;
-      el.textContent = msg;
-      setTimeout(() => (el.textContent = old), 2000);
-    }
+    if (spApp.toast) spApp.toast(msg);
   },
   bind() {
     const self = this;

@@ -10,6 +10,9 @@ const cfg = require("./lib/config");
 const tpl = require("./lib/templates");
 const log = require("./lib/logger");
 const capture = require("./lib/capture");
+const modelStats = require("./lib/modelStats");
+const usageLog = require("./lib/usageLog");
+const tokenScan = require("./lib/tokenScan");
 const sectionParser = require("./lib/sectionParser");
 const { forward } = require("./lib/auth-proxy");
 
@@ -69,7 +72,7 @@ function wrapTemplate(text) {
 // ═══════════════════════════════════════════════════════════
 
 // 解析上游：按客户端 model 精确匹配映射表
-// 返回 { candidates:[{upstream, apiKey, targetModel}], effectiveMode } 或 { error, code }
+// 返回 { candidates:[{upstream, apiKey, targetModel}], effectiveMode, model } 或 { error, code }
 // effectiveMode：映射自带 mode 优先，否则 undefined（调用方回退全局 mode）
 // 无映射命中 → 404（需先在面板配置模型映射）
 function resolveUpstream(body) {
@@ -83,7 +86,7 @@ function resolveUpstream(body) {
     if (!matched.candidates.length) {
       return { error: "mapping matched but no valid upstream for: " + model, code: 502 };
     }
-    return { candidates: matched.candidates, effectiveMode: matched.mapping.mode || "" };
+    return { candidates: matched.candidates, effectiveMode: matched.mapping.mode || "", model };
   }
   // 未命中映射：若已有映射配置，提示补配；若一条映射都没有，提示先配置
   const hint = cfg.getModelMappings().length > 0
@@ -92,7 +95,73 @@ function resolveUpstream(body) {
   return { error: hint, code: 404 };
 }
 
+// ── OpenAI 兼容模型列表端点（供客户端自动获取模型，同 DeepSeek 风格）──
+// GET /v1/models（或 /models）        → 全部可用模型
+// GET /v1/models/:model（或 /models/:model） → 单个模型详情
+// 模型来源：映射表的 clientModel（客户端请求本代理时填的 model 名）
+const MODELS_CREATED = 1718900000; // 固定 created 时间戳（DeepSeek 官方同款做法）
+
+// 由一条映射构造 OpenAI 模型对象；owned_by 取第一候选上游名，context_length 尽力补全
+function modelEntry(mapping) {
+  let ownedBy = "sp-injector";
+  let contextLength = null;
+  const first = (mapping.upstreams || [])[0];
+  if (first) {
+    const up = cfg.getUpstreams().find((u) => u.id === first.upstreamId);
+    if (up) {
+      ownedBy = up.name || up.host || ownedBy;
+      const tm = (up.models || []).find((mm) => mm.name === first.targetModel);
+      if (tm && typeof tm.contextK === "number" && tm.contextK > 0) {
+        // contextK 语义为"千 token"（128 → 128K）；若存的是原始 token 数（≥4096）则原样使用
+        contextLength = tm.contextK >= 4096 ? tm.contextK : tm.contextK * 1024;
+      }
+    }
+  }
+  const e = {
+    id: mapping.clientModel,
+    object: "model",
+    created: MODELS_CREATED,
+    owned_by: ownedBy,
+  };
+  if (contextLength) e.context_length = contextLength;
+  return e;
+}
+
+// 命中模型端点则应答并返回 true；否则返回 false 交回主流程
+function handleModelsEndpoint(reqPath, res) {
+  const p = (reqPath || "").split("?")[0].replace(/\/+$/, ""); // 去 query + 尾斜杠
+  if (p === "/v1/models" || p === "/models") {
+    const data = cfg
+      .getModelMappings()
+      .filter((mp) => mp.clientModel)
+      .map(modelEntry);
+    sendJson(res, 200, { object: "list", data });
+    return true;
+  }
+  const mm = p.match(/^\/(?:v1\/)?models\/([^/]+)$/);
+  if (mm) {
+    const name = dec(mm[1]);
+    const found = cfg.getModelMappings().find((mp) => mp.clientModel === name);
+    if (found) {
+      sendJson(res, 200, modelEntry(found));
+    } else {
+      // OpenAI 风格错误体
+      sendJson(res, 404, {
+        error: {
+          message: `The model '${name}' does not exist`,
+          type: "invalid_request_error",
+          param: null,
+          code: "model_not_found",
+        },
+      });
+    }
+    return true;
+  }
+  return false;
+}
+
 const proxyServer = http.createServer(async (req, res) => {
+  const startTs = Date.now(); // TTFB 起点:客户端请求到达(含 body 接收与故障转移重试)
   const reqPath = req.url || "/";
   const method = req.method || "GET";
 
@@ -124,6 +193,10 @@ const proxyServer = http.createServer(async (req, res) => {
       stats: log.stats(),
     });
   }
+
+  // ── OpenAI 兼容模型列表（GET /v1/models、/v1/models/:model）──
+  // 必须在 readBody/上游转发之前拦截：这类 GET 请求没有 body.model，走转发只会得到 404
+  if (method === "GET" && handleModelsEndpoint(reqPath, res)) return;
 
   // ── 判断是否为聊天接口（按当前接口格式）──
   const fmt = cfg.getFormat();
@@ -221,8 +294,17 @@ const proxyServer = http.createServer(async (req, res) => {
     }
     console.log(`[${ts()}] official mode, captured+passthrough ${reqPath}`);
     // resolved 已在前面解析完毕，模型映射由 forward 层按各候选 targetModel 改写
-    return forward(req, body, res, resolved.candidates, (upstreamRes) => {
-      relayResponse(upstreamRes, res);
+    return forward(req, body, res, resolved.candidates, (upstreamRes, won) => {
+      relayResponse(upstreamRes, res, {
+        model: resolved.model,
+        targetModel: (won && won.targetModel) || "",
+        upstream: (won && won.upstream && won.upstream.host) || "",
+        mode,
+        format: fmt2,
+        path: reqPath,
+        stream: obj.stream === true,
+        start: startTs,
+      });
     });
   }
 
@@ -336,18 +418,31 @@ const proxyServer = http.createServer(async (req, res) => {
     `[${ts()}] inject ${reqPath} fmt=${fmt2} mode=${mode} tpl=${tplNames}(${merged.length}字,${tplTexts.length}个) system ${origPrev.len}→${newPrev.len}字${keptInfo}`,
   );
 
-  forward(req, newBody, res, resolved.candidates, (upstreamRes) => {
-    relayResponse(upstreamRes, res);
+  forward(req, newBody, res, resolved.candidates, (upstreamRes, won) => {
+    relayResponse(upstreamRes, res, {
+      model: resolved.model,
+      targetModel: (won && won.targetModel) || "",
+      upstream: (won && won.upstream && won.upstream.host) || "",
+      mode,
+      format: fmt2,
+      path: reqPath,
+      stream: obj.stream === true,
+      start: startTs,
+    });
   });
 });
 
 // 把上游响应头+流原样转回客户端（SSE 不动一字节）
-function relayResponse(upstreamRes, clientRes) {
+// meta: {model,targetModel,upstream,mode,format,path,stream,start} 有值时记录流水与统计
+// token 用量通过只读采样器从响应流中尽力解析,不影响转发内容
+function relayResponse(upstreamRes, clientRes, meta) {
   const headers = { ...upstreamRes.headers };
   // hop-by-hop 头不转发
   delete headers["connection"];
   delete headers["keep-alive"];
   delete headers["transfer-encoding"];
+  const tap = tokenScan.createTap(upstreamRes.headers["content-type"]);
+  upstreamRes.on("data", (c) => tap.push(c));
   try {
     clientRes.writeHead(upstreamRes.statusCode || 502, headers);
     upstreamRes.pipe(clientRes);
@@ -356,6 +451,33 @@ function relayResponse(upstreamRes, clientRes) {
     try {
       clientRes.end();
     } catch {}
+  }
+  if (meta && meta.model) {
+    const ttfb = Date.now() - meta.start;
+    const ok = (upstreamRes.statusCode || 500) < 400;
+    // close 在流结束/客户端中断时都会触发,保证不漏记
+    upstreamRes.once("close", () => {
+      const u = tap.result();
+      modelStats.record(meta.model, ttfb, ok, u);
+      usageLog.append({
+        model: meta.model,
+        targetModel: meta.targetModel,
+        upstream: meta.upstream,
+        mode: meta.mode,
+        format: meta.format,
+        path: meta.path,
+        status: upstreamRes.statusCode || 0,
+        ok,
+        stream: meta.stream,
+        ttfbMs: ttfb,
+        totalMs: Date.now() - meta.start,
+        tokIn: u.tokIn,
+        tokOut: u.tokOut,
+        tokCacheRead: u.tokCacheRead,
+        tokCacheCreate: u.tokCacheCreate,
+        errMsg: ok ? "" : u.errPreview,
+      });
+    });
   }
 }
 
@@ -370,6 +492,7 @@ const MIME = {
   ".css": "text/css; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".png": "image/png",
+  ".svg": "image/svg+xml",
   ".ico": "image/x-icon",
 };
 
@@ -388,7 +511,11 @@ function serveStatic(req, res) {
   fs.readFile(filePath, (err, data) => {
     if (err) return sendJson(res, 404, { error: "not found" });
     const ext = path.extname(filePath).toLowerCase();
-    res.writeHead(200, { "content-type": MIME[ext] || "application/octet-stream" });
+    // 本地面板不缓存:改版后刷新即生效,无需清浏览器缓存
+    res.writeHead(200, {
+      "content-type": MIME[ext] || "application/octet-stream",
+      "cache-control": "no-cache",
+    });
     res.end(data);
   });
 }
@@ -674,6 +801,65 @@ const panelServer = http.createServer(async (req, res) => {
     return sendJson(res, 200, { ok: true });
   }
 
+  // GET /api/model-stats  按模型聚合 + 最近一分钟 RPM/TPM
+  // 可选 from/to(YYYY-MM-DD,含两端):返回 custom 字段为该日期区间的聚合
+  if (method === "GET" && urlPath === "/api/model-stats") {
+    const qs = new URLSearchParams((req.url || "").split("?")[1] || "");
+    const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+    const from = qs.get("from") || "";
+    const to = qs.get("to") || "";
+    const lm = usageLog.lastMinute();
+    const out = {
+      today: modelStats.query("today"),
+      all: modelStats.query("all"),
+      rpm: lm.rpm,
+      tpm: lm.tpm,
+    };
+    if (DATE_RE.test(from) && DATE_RE.test(to) && from <= to) {
+      out.custom = modelStats.rangeQuery(from, to);
+    }
+    return sendJson(res, 200, out);
+  }
+
+  // GET /api/model-stats/trend  近 24 小时逐小时调用/token 序列(趋势图)
+  if (method === "GET" && urlPath === "/api/model-stats/trend") {
+    return sendJson(res, 200, { hours: modelStats.trend24h() });
+  }
+
+  // GET /api/usage/trend?fromTs=&toTs=  波浪图:每模型按时间桶的 次数/token 序列
+  if (method === "GET" && urlPath === "/api/usage/trend") {
+    const qs = new URLSearchParams((req.url || "").split("?")[1] || "");
+    return sendJson(res, 200, usageLog.series({
+      fromTs: qs.get("fromTs"),
+      toTs: qs.get("toTs"),
+    }));
+  }
+
+  // POST /api/model-stats/clear  清空模型统计
+  if (method === "POST" && urlPath === "/api/model-stats/clear") {
+    modelStats.reset();
+    return sendJson(res, 200, { ok: true });
+  }
+
+  // GET /api/usage  调用流水:分页列表 + 汇总统计 + 模型下拉选项
+  // 参数: page, pageSize, model, status(ok|err), range(today|7d|all)
+  if (method === "GET" && urlPath === "/api/usage") {
+    const qs = new URLSearchParams((req.url || "").split("?")[1] || "");
+    return sendJson(res, 200, usageLog.list({
+      page: qs.get("page"),
+      pageSize: qs.get("pageSize"),
+      model: qs.get("model") || "",
+      status: qs.get("status") || "",
+      range: qs.get("range") || "all",
+    }));
+  }
+
+  // POST /api/usage/clear  清空调用流水
+  if (method === "POST" && urlPath === "/api/usage/clear") {
+    usageLog.clear();
+    return sendJson(res, 200, { ok: true });
+  }
+
   // GET /api/sections  从最近一条抓取解析章节列表 + 当前 keep
   if (method === "GET" && urlPath === "/api/sections") {
     const all = capture.list();
@@ -710,44 +896,65 @@ const panelServer = http.createServer(async (req, res) => {
 // 启动
 // ═══════════════════════════════════════════════════════════
 
-proxyServer.on("error", (e) => {
-  if (e.code === "EADDRINUSE") {
-    console.error(`[FATAL] 端口 ${PORT_PROXY} 被占用`);
-  } else {
-    console.error(`[FATAL] proxy server error:`, e);
-  }
-  process.exit(1);
-});
-panelServer.on("error", (e) => {
-  if (e.code === "EADDRINUSE") {
-    console.error(`[FATAL] 端口 ${PORT_PANEL} 被占用`);
-  } else {
-    console.error(`[FATAL] panel server error:`, e);
-  }
-  process.exit(1);
-});
+// 单个 server 监听：失败 reject（EADDRINUSE 等），成功 resolve
+function listenOn(server, port) {
+  return new Promise((resolve, reject) => {
+    const onError = (e) => reject(e);
+    server.once("error", onError);
+    server.listen(port, "127.0.0.1", () => {
+      server.removeListener("error", onError);
+      resolve(server);
+    });
+  });
+}
 
-proxyServer.listen(PORT_PROXY, "127.0.0.1", () => {
-  console.log(`[sp-injector] 代理入口  : http://127.0.0.1:${PORT_PROXY}`);
-});
-panelServer.listen(PORT_PANEL, "127.0.0.1", () => {
-  console.log(`[sp-injector] Web 面板  : http://127.0.0.1:${PORT_PANEL}`);
+// 启动双 server（供 Electron 主进程调用；端口可注入）
+// 返回 Promise<{ proxyServer, panelServer, ports: { proxy, panel } }>
+async function startProxy(opts = {}) {
+  const proxyPort = parseInt(opts.proxyPort || PORT_PROXY, 10);
+  const panelPort = parseInt(opts.panelPort || PORT_PANEL, 10);
+
+  try {
+    await listenOn(proxyServer, proxyPort);
+  } catch (e) {
+    if (e.code === "EADDRINUSE") console.error(`[FATAL] 端口 ${proxyPort} 被占用`);
+    else console.error(`[FATAL] proxy server error:`, e);
+    throw e;
+  }
+  console.log(`[sp-injector] 代理入口  : http://127.0.0.1:${proxyPort}`);
+
+  try {
+    await listenOn(panelServer, panelPort);
+  } catch (e) {
+    proxyServer.close();
+    if (e.code === "EADDRINUSE") console.error(`[FATAL] 端口 ${panelPort} 被占用`);
+    else console.error(`[FATAL] panel server error:`, e);
+    throw e;
+  }
+
+  console.log(`[sp-injector] Web 面板  : http://127.0.0.1:${panelPort}`);
   console.log(`[sp-injector] 当前模板  : ${cfg.getActiveTemplates().join(" + ") || "(无)"} (${cfg.getMode()} 模式)`);
   console.log(
     `[sp-injector] 上游/映射 : ${cfg.getUpstreams().length} 个上游 / ${cfg.getModelMappings().length} 条映射`,
   );
   console.log(`[sp-injector] 上善若水 · 道法自然`);
-});
+  return { proxyServer, panelServer, ports: { proxy: proxyPort, panel: panelPort } };
+}
 
-// 优雅退出
-process.on("SIGINT", () => {
-  console.log("\n[sp-injector] 收到 SIGINT，关闭中...");
-  proxyServer.close();
-  panelServer.close();
-  process.exit(0);
-});
-process.on("SIGTERM", () => {
-  proxyServer.close();
-  panelServer.close();
-  process.exit(0);
-});
+// 直跑模式（node proxy.js）：自启动 + 优雅退出；被 require 时不自动监听
+if (require.main === module) {
+  startProxy().catch(() => process.exit(1));
+  process.on("SIGINT", () => {
+    console.log("\n[sp-injector] 收到 SIGINT，关闭中...");
+    proxyServer.close();
+    panelServer.close();
+    process.exit(0);
+  });
+  process.on("SIGTERM", () => {
+    proxyServer.close();
+    panelServer.close();
+    process.exit(0);
+  });
+}
+
+module.exports = { startProxy };

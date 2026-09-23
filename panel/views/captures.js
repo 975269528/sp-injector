@@ -41,7 +41,7 @@ spApp.views.captures = {
             <td>${c.format}</td>
             <td class="mono">${c.originalLen}</td>
             <td class="mono">${c.mode === "official" ? "-" : c.injectedLen}</td>
-            <td><span class="badge-mode ${c.mode}">${c.mode}</span></td>
+            <td><span class="badge-mode ${c.mode}">${esc(spApp.modeCn[c.mode] || c.mode)}</span></td>
           </tr>
         `;
       })

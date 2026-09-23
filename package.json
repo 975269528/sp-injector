@@ -1,13 +1,56 @@
 {
   "name": "sp-injector",
-  "version": "1.0.0",
-  "description": "本地透明代理：拦截 ZCode/Anthropic 请求，改写 system 字段为可切换模板，响应原样透传。含 Web 面板。",
-  "main": "proxy.js",
+  "version": "1.1.0",
+  "description": "本地透明代理:拦截 LLM 客户端请求,改写 system 字段为可切换模板,响应原样透传。Electron 桌面客户端 + Web 面板。",
+  "main": "electron/main.js",
   "type": "commonjs",
   "scripts": {
     "start": "node proxy.js",
-    "panel": "node proxy.js"
+    "panel": "node proxy.js",
+    "icon": "node scripts/gen-icon.js",
+    "dev": "electron .",
+    "dist": "electron-builder --win"
   },
-  "keywords": ["anthropic", "claude", "proxy", "system-prompt", "injector"],
-  "license": "MIT"
+  "keywords": ["anthropic", "claude", "proxy", "system-prompt", "injector", "electron"],
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.sp-injector.app",
+    "productName": "SP Injector",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**",
+      "lib/**",
+      "panel/**",
+      "proxy.js",
+      "package.json",
+      "README.md"
+    ],
+    "extraResources": [
+      {
+        "from": "templates",
+        "to": "seed-templates"
+      }
+    ],
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "icon": "electron/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "sp-injector-setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "sp-injector-portable-${version}.${ext}"
+    }
+  }
 }

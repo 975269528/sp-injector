@@ -19,12 +19,12 @@ spApp.views.routing = {
     self.renderUpstreams();
     self.renderMappings();
   },
-  // ── 上游池表格 ───────────────────────────────────────────────
+  // ── 上游池卡片(modelsPath 不再暴露 UI,默认 /models) ──────────
   renderUpstreams() {
     const self = this;
-    const tb = $("up-tbody");
+    const box = $("up-cards");
     if (!this.upstreams.length) {
-      tb.innerHTML = '<tr><td colspan="8" class="muted center">暂无上游。点「+ 添加上游」。</td></tr>';
+      box.innerHTML = '<div class="rt-empty" style="grid-column:span 2;">暂无上游。点「+ 添加上游」。</div>';
       return;
     }
     const proxyOpts = (val) =>
@@ -35,53 +35,57 @@ spApp.views.routing = {
         )
         .join("");
     const q = (s) => esc(String(s == null ? "" : s)).replace(/"/g, "&quot;");
-    tb.innerHTML = this.upstreams
+    box.innerHTML = this.upstreams
       .map((u, i) => {
         const models = Array.isArray(u.models) ? u.models : [];
         const modelHtml = models.length
-          ? `模型: ${models.map((m) => q(m && m.name)).join(", ")} <span class="muted">(${models.length}个)</span>`
-          : `<span class="muted">模型: (未拉取,点「拉取」)</span>`;
+          ? `<span class="um-count">${models.length}</span> 个
+             <div class="um-tags">${models
+               .map((m) => `<span class="um-tag" title="${q(m && m.name)}">${q(m && m.name)}</span>`)
+               .join("")}</div>`
+          : `<span class="um-empty">(未拉取,点「拉取」自动获取)</span>`;
         return `
-      <tr>
-        <td><input class="rt-input" data-u="${i}" data-k="name" value="${q(u.name)}" style="width:100px" /></td>
-        <td><input class="rt-input" data-u="${i}" data-k="host" value="${q(u.host)}" style="width:160px" /></td>
-        <td><input class="rt-input" data-u="${i}" data-k="port" value="${q(u.port == null ? 443 : u.port)}" style="width:60px" /></td>
-        <td><input class="rt-input" data-u="${i}" data-k="pathPrefix" value="${q(u.pathPrefix)}" style="width:110px" /></td>
-        <td><select class="rt-input rt-proxy" data-u="${i}" data-k="useProxy" style="width:110px">${proxyOpts(u.useProxy || "direct")}</select></td>
-        <td><input class="rt-input" data-u="${i}" data-k="modelsPath" value="${q(u.modelsPath || "/models")}" style="width:110px" placeholder="/models" /></td>
-        <td><input class="rt-input" data-u="${i}" data-k="apiKey" value="${q(u.apiKey)}" style="width:160px" placeholder="sk-..." type="password" /></td>
-        <td style="white-space:nowrap">
-          <button class="btn btn-small" data-fetch="${i}">拉取</button>
-          <button class="btn btn-small btn-danger" data-u-del="${i}">删</button>
-        </td>
-      </tr>
-      <tr><td colspan="8" class="up-models">${modelHtml}</td></tr>`;
+      <div class="up-card" data-card="${i}">
+        <div class="up-card-head">
+          <input class="rt-input up-name" data-u="${i}" data-k="name" value="${q(u.name)}" placeholder="上游名称" />
+          <button class="btn btn-small" data-fetch="${i}">${spApp.icon("refresh", 12)}拉取</button>
+          <button class="btn btn-small btn-danger" data-u-del="${i}">${spApp.icon("trash", 12)}删除</button>
+        </div>
+        <div class="up-card-grid">
+          <label class="span2">域名<input class="rt-input" data-u="${i}" data-k="host" value="${q(u.host)}" placeholder="api.example.com" /></label>
+          <label>端口<input class="rt-input" data-u="${i}" data-k="port" value="${q(u.port == null ? 443 : u.port)}" /></label>
+          <label>出站代理<select class="rt-input rt-proxy" data-u="${i}" data-k="useProxy">${proxyOpts(u.useProxy || "direct")}</select></label>
+          <label class="span2">路径前缀<input class="rt-input" data-u="${i}" data-k="pathPrefix" value="${q(u.pathPrefix)}" placeholder="如 /api/v3" /></label>
+          <label class="span2">API Key<input class="rt-input" data-u="${i}" data-k="apiKey" value="${q(u.apiKey)}" placeholder="sk-..." type="password" /></label>
+        </div>
+        <div class="up-card-models">模型 ${modelHtml}</div>
+      </div>`;
       })
       .join("");
 
-    // 普通输入（除代理模式 select 外）
-    tb.querySelectorAll(".rt-input[data-u]:not(.rt-proxy)").forEach((inp) => {
+    // 普通输入(除代理模式 select 外)
+    box.querySelectorAll(".rt-input[data-u]:not(.rt-proxy)").forEach((inp) => {
       inp.oninput = () => {
         const i = parseInt(inp.dataset.u, 10);
         self.upstreams[i][inp.dataset.k] = inp.value;
       };
     });
-    // 代理模式（已无 custom，不再联动显隐，但仍写入 useProxy 字段）
-    tb.querySelectorAll(".rt-proxy").forEach((sel) => {
+    // 代理模式(写入 useProxy 字段)
+    box.querySelectorAll(".rt-proxy").forEach((sel) => {
       sel.onchange = () => {
         const i = parseInt(sel.dataset.u, 10);
         self.upstreams[i].useProxy = sel.value;
       };
     });
     // 删除上游
-    tb.querySelectorAll("[data-u-del]").forEach((b) => {
+    box.querySelectorAll("[data-u-del]").forEach((b) => {
       b.onclick = () => {
         self.upstreams.splice(parseInt(b.dataset.uDel, 10), 1);
         self.renderUpstreams();
       };
     });
     // 拉取模型
-    tb.querySelectorAll("[data-fetch]").forEach((b) => {
+    box.querySelectorAll("[data-fetch]").forEach((b) => {
       b.onclick = async () => {
         const i = parseInt(b.dataset.fetch, 10);
         const up = self.upstreams[i];
@@ -89,26 +93,39 @@ spApp.views.routing = {
           self.flash("上游缺少 id,请先保存", true);
           return;
         }
-        const oldText = b.textContent;
+        const oldHtml = b.innerHTML;
         b.disabled = true;
-        b.textContent = "拉取中...";
+        b.innerHTML = spApp.icon("refresh", 12) + "拉取中...";
         try {
           const r = await spApp.api.post(
-            `/api/upstreams/${encodeURIComponent(up.id)}/fetch-models`,
+            "/api/upstreams/" + encodeURIComponent(up.id) + "/fetch-models",
           );
           if (r && r.error) throw new Error(r.error);
-          self.flash(`拉取到 ${r.count} 个模型`);
+          self.flash("拉取到 " + r.count + " 个模型");
           await self.load(); // 后端已写回 models,重新加载
         } catch (e) {
           self.flash("拉取失败: " + (e.message || ""), true);
         } finally {
           b.disabled = false;
-          b.textContent = oldText;
+          b.innerHTML = oldHtml;
         }
       };
     });
   },
-  // ── 模型映射 ─────────────────────────────────────────────────
+  // ── 模型映射(折叠式:一行摘要,点击展开编辑) ──────────────────
+  // 摘要目标串:候选1 → targetModel@上游名 / 候选2 ...
+  _sumTargets(m) {
+    const ups = Array.isArray(m.upstreams) ? m.upstreams : [];
+    if (!ups.length) return "(无候选)";
+    return ups
+      .map((c) => {
+        const up = this.upstreams.find((u) => u.id === c.upstreamId);
+        const upName = (up && up.name) || c.upstreamId || "?";
+        const tm = c.targetModel ? c.targetModel : "(原名)";
+        return esc(tm) + '<span class="sep">@</span>' + esc(upName);
+      })
+      .join('<span class="sep">/</span>');
+  },
   renderMappings() {
     const self = this;
     const box = $("mm-list");
@@ -116,7 +133,9 @@ spApp.views.routing = {
       box.innerHTML = '<div class="rt-empty">暂无映射。点「+ 添加映射」。</div>';
       return;
     }
+    this._expanded = this._expanded || {};
     const q = (s) => esc(String(s == null ? "" : s)).replace(/"/g, "&quot;");
+    const MODE_LABELS = { "": "全局", replace: "替换", prepend: "前置", official: "原样透传", keepSections: "保留章节" };
     const upOpts = (selId) =>
       this.upstreams.length
         ? this.upstreams
@@ -133,13 +152,17 @@ spApp.views.routing = {
 
     box.innerHTML = this.mappings
       .map((m, mi) => {
-        const ups = Array.isArray(m.upstreams) ? m.upstreams : [];
-        // 注入模式下拉：留空(全局) + replace/prepend/official/keepSections（显示中文，value 保留英文供后端校验）
-        const MODE_LABELS = { "": "(用全局)", replace: "替换", prepend: "前置", official: "原样透传", keepSections: "保留章节" };
+        const open = !!this._expanded[m.id];
+        const modeVal = m.mode || "";
+        const modeBadge = modeVal
+          ? `<span class="badge-mode ${modeVal}">${MODE_LABELS[modeVal]}</span>`
+          : `<span class="badge-mode">全局模式</span>`;
+        // 注入模式下拉:留空(全局) + 四种模式(value 保留英文供后端校验)
         const modeOpts = (val) =>
           ["", "replace", "prepend", "official", "keepSections"]
             .map((o) => `<option value="${o}"${o === (val || "") ? " selected" : ""}>${MODE_LABELS[o] || o}</option>`)
             .join("");
+        const ups = Array.isArray(m.upstreams) ? m.upstreams : [];
         const upsHtml = ups.length
           ? ups
               .map((c, ci) => {
@@ -147,7 +170,7 @@ spApp.views.routing = {
                 const dlOpts = names.map((n) => `<option value="${q(n)}">`).join("");
                 return `
             <div class="rt-up-row" draggable="true" data-mi="${mi}" data-ci="${ci}">
-              <span class="rt-drag" title="拖拽排序">⠿</span>
+              <span class="rt-drag" title="拖拽排序">${spApp.icon("grip", 14)}</span>
               <span class="seq-mini">${ci + 1}</span>
               <select class="rt-input mm-up-sel" data-mi="${mi}" data-ci="${ci}" style="width:150px">${upOpts(c.upstreamId)}</select>
               <input class="rt-input mm-target" data-mi="${mi}" data-ci="${ci}" list="dl-mm-${mi}-${ci}" value="${q(c.targetModel)}" style="width:200px" placeholder="(不改写,留空)" autocomplete="off" />
@@ -159,30 +182,55 @@ spApp.views.routing = {
           : '<div class="rt-empty">无候选,点「+ 候选」添加</div>';
 
         return `
-        <div class="rt-rule">
-          <div class="rt-rule-head">
-            <span class="muted" style="font-size:11px;">客户端名</span>
-            <input class="rt-input mm-client" data-mi="${mi}" value="${q(m.clientModel)}" style="width:200px" placeholder="如 gpt-4o 或 glm-4.6" />
-            <span class="muted" style="font-size:11px;">注入模式</span>
-            <select class="rt-input mm-mode" data-mi="${mi}" style="width:120px">${modeOpts(m.mode)}</select>
-            <button class="btn btn-small" data-mi-up-add="${mi}">+ 候选</button>
-            <button class="btn btn-small btn-danger rt-rule-del" data-mi-del="${mi}">删映射</button>
+        <div class="rt-rule ${open ? "open" : ""}" data-mid="${q(m.id)}">
+          <div class="rt-rule-sum" data-toggle="${q(m.id)}" title="点击展开/收起编辑">
+            <span class="rt-sum-chev">${spApp.icon("chevron", 13)}</span>
+            <span class="rt-sum-client">${q(m.clientModel) || "(未命名)"}</span>
+            ${modeBadge}
+            <span class="rt-sum-targets">${this._sumTargets(m)}</span>
           </div>
-          <div class="mm-ups">${upsHtml}</div>
+          <div class="rt-rule-body">
+            <div class="rt-rule-head">
+              <span class="muted" style="font-size:11px;">客户端名</span>
+              <input class="rt-input mm-client" data-mi="${mi}" value="${q(m.clientModel)}" style="width:200px" placeholder="如 gpt-4o 或 glm-4.6" />
+              <span class="muted" style="font-size:11px;">注入模式</span>
+              <select class="rt-input mm-mode" data-mi="${mi}" style="width:120px">${modeOpts(m.mode)}</select>
+              <button class="btn btn-small" data-mi-up-add="${mi}">+ 候选</button>
+              <button class="btn btn-small btn-danger rt-rule-del" data-mi-del="${mi}">删映射</button>
+            </div>
+            <div class="mm-ups">${upsHtml}</div>
+          </div>
         </div>`;
       })
       .join("");
 
-    // 客户端名
-    box.querySelectorAll(".mm-client").forEach((inp) => {
-      inp.oninput = () => {
-        self.mappings[parseInt(inp.dataset.mi, 10)].clientModel = inp.value;
+    // 摘要行:点击展开/收起(不重渲染,只切 class)
+    box.querySelectorAll(".rt-rule-sum").forEach((sum) => {
+      sum.onclick = (e) => {
+        if (e.target.closest("button, input, select")) return; // 按钮区不触发
+        const rule = sum.closest(".rt-rule");
+        const mid = sum.dataset.toggle;
+        const nowOpen = rule.classList.toggle("open");
+        if (nowOpen) self._expanded[mid] = true;
+        else delete self._expanded[mid];
       };
     });
-    // 注入模式（覆盖全局，留空表示用全局）
+    // 客户端名(编辑时同步摘要行)
+    box.querySelectorAll(".mm-client").forEach((inp) => {
+      inp.oninput = () => {
+        const mi = parseInt(inp.dataset.mi, 10);
+        self.mappings[mi].clientModel = inp.value;
+        const rule = inp.closest(".rt-rule");
+        const sc = rule.querySelector(".rt-sum-client");
+        if (sc) sc.textContent = inp.value || "(未命名)";
+      };
+    });
+    // 注入模式(覆盖全局,留空表示用全局;同步摘要徽章)
     box.querySelectorAll(".mm-mode").forEach((sel) => {
       sel.onchange = () => {
-        self.mappings[parseInt(sel.dataset.mi, 10)].mode = sel.value;
+        const mi = parseInt(sel.dataset.mi, 10);
+        self.mappings[mi].mode = sel.value;
+        self.renderMappings(); // 徽章样式随模式变化,整体重渲染最稳
       };
     });
     // 候选:上游选择(切换后 datalist 要跟随,重渲染)
@@ -194,12 +242,15 @@ spApp.views.routing = {
         self.renderMappings();
       };
     });
-    // 候选:真实模型名
+    // 候选:真实模型名(编辑时同步摘要)
     box.querySelectorAll(".mm-target").forEach((inp) => {
       inp.oninput = () => {
         const mi = parseInt(inp.dataset.mi, 10);
         const ci = parseInt(inp.dataset.ci, 10);
         self.mappings[mi].upstreams[ci].targetModel = inp.value;
+        const rule = inp.closest(".rt-rule");
+        const st = rule.querySelector(".rt-sum-targets");
+        if (st) st.innerHTML = self._sumTargets(self.mappings[mi]);
       };
     });
     // 删候选
@@ -225,7 +276,9 @@ spApp.views.routing = {
     // 删映射
     box.querySelectorAll(".rt-rule-del").forEach((b) => {
       b.onclick = () => {
-        self.mappings.splice(parseInt(b.dataset.miDel, 10), 1);
+        const mi = parseInt(b.dataset.miDel, 10);
+        delete self._expanded[self.mappings[mi].id];
+        self.mappings.splice(mi, 1);
         self.renderMappings();
       };
     });
@@ -302,7 +355,7 @@ spApp.views.routing = {
       self.renderUpstreams();
     };
     $("btn-mm-add").onclick = () => {
-      self.mappings.push({
+      const m = {
         id: self.mmId(),
         clientModel: "",
         mode: "",
@@ -312,7 +365,10 @@ spApp.views.routing = {
             targetModel: "",
           },
         ],
-      });
+      };
+      self._expanded = self._expanded || {};
+      self._expanded[m.id] = true; // 新映射自动展开,直接可编辑
+      self.mappings.push(m);
       self.renderMappings();
     };
     const saveOne = async (path, key, list) => {

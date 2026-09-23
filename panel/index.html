@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>sp-injector · 控制台</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%232563EB'/%3E%3Ccircle cx='12' cy='12' r='7.5' fill='none' stroke='white' stroke-width='1.4'/%3E%3Cpath d='M12 4.5a3.75 3.75 0 0 1 0 7.5 3.75 3.75 0 0 0 0 7.5' fill='none' stroke='white' stroke-width='1.4'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="/panel/panel.css" />
 </head>
 <body>
@@ -11,16 +12,17 @@
     <!-- 顶部导航 -->
     <header class="topbar">
       <div class="topbar-left">
-        <span class="logo">☰</span>
+        <span class="logo"><i data-ic="taichi" data-ic-size="17"></i></span>
         <span class="title">sp-injector</span>
-        <span class="ver">v2.0</span>
+        <span class="ver" id="app-ver">v1.1</span>
       </div>
       <div class="topbar-mid">
-        <span class="addr-key">代理</span>
-        <code id="addr-proxy" class="addr-inline" title="填到 ZCode 的 API 地址">http://127.0.0.1:8080</code>
+        <span class="addr-key">代理地址</span>
+        <code id="addr-proxy" class="addr-inline" title="填到客户端的 API 地址">http://127.0.0.1:8080</code>
         <button id="btn-copy-addr" class="btn-copy-inline">复制</button>
       </div>
       <div class="topbar-right">
+        <button id="btn-theme" class="btn-theme" title="切换深色 / 浅色"><i data-ic="moon" data-ic-size="15"></i></button>
         <span class="run-dot" id="run-dot"></span>
         <span class="run-text" id="run-text">运行中</span>
       </div>
@@ -29,22 +31,88 @@
     <div class="body-wrap">
       <!-- 左侧栏 -->
       <nav class="sidebar">
-        <a class="nav-item active" data-view="overview">📊 概览</a>
-        <a class="nav-item" data-view="templates">📜 模板</a>
-        <a class="nav-item" data-view="upstream">💉 注入</a>
-        <a class="nav-item" data-view="routing">🛣️ 路由</a>
-        <a class="nav-item" data-view="captures">🔍 System 抓取</a>
-        <a class="nav-item" data-view="settings">⚙️ 设置</a>
+        <a class="nav-item" data-view="overview"><i data-ic="overview" data-ic-size="17"></i><span>概览</span></a>
+        <a class="nav-item" data-view="usage"><i data-ic="usage" data-ic-size="17"></i><span>使用记录</span></a>
+        <a class="nav-item" data-view="templates"><i data-ic="templates" data-ic-size="17"></i><span>模板</span></a>
+        <a class="nav-item" data-view="upstream"><i data-ic="inject" data-ic-size="17"></i><span>注入</span></a>
+        <a class="nav-item" data-view="routing"><i data-ic="routing" data-ic-size="17"></i><span>路由</span></a>
+        <a class="nav-item" data-view="captures"><i data-ic="captures" data-ic-size="17"></i><span>System 抓取</span></a>
+        <a class="nav-item" data-view="settings"><i data-ic="settings" data-ic-size="17"></i><span>设置</span></a>
+        <div class="side-status" id="side-status"></div>
       </nav>
 
       <!-- 主区 -->
       <main class="main">
-        <!-- 概览 -->
-        <section class="view active" id="view-overview">
+        <!-- 概览(激活态由下方内联脚本按 hash 决定,不硬编码,避免刷新闪错页面) -->
+        <section class="view" id="view-overview">
+          <div class="ov-toolbar">
+            <div class="ov-dates">
+              <input type="date" id="ov-from" class="input uf-date" />
+              <span class="muted">~</span>
+              <input type="date" id="ov-to" class="input uf-date" />
+              <div class="seg" id="ov-presets">
+                <button data-p="today" class="seg-btn active">今日</button>
+                <button data-p="7d" class="seg-btn">近7天</button>
+                <button data-p="30d" class="seg-btn">近30天</button>
+              </div>
+            </div>
+            <button id="btn-ov-clear" class="btn btn-small btn-danger"><i data-ic="trash" data-ic-size="13"></i>清空统计数据</button>
+          </div>
           <div class="stat-grid" id="stat-grid"></div>
+          <div class="ov-bottom">
+            <div class="card">
+              <div class="card-head">
+                <h3><i data-ic="activity" data-ic-size="15"></i>近 24 小时调用</h3>
+                <span id="trend-sum" class="muted trend-sum"></span>
+              </div>
+              <div id="ov-trend"></div>
+            </div>
+            <div class="card">
+              <h3><i data-ic="settings" data-ic-size="15"></i>当前状态</h3>
+              <div id="overview-state" class="kv-list"></div>
+            </div>
+          </div>
           <div class="card">
-            <h3>当前状态</h3>
-            <div id="overview-state" class="kv-list"></div>
+            <div class="card-head">
+              <h3><i data-ic="trend" data-ic-size="15"></i>模型调用趋势 <span class="muted" style="font-size:11px;font-weight:400;">(悬停查看该时段各模型用量)</span></h3>
+              <div class="seg" id="wave-metric">
+                <button data-m="count" class="seg-btn">次数</button>
+                <button data-m="tok" class="seg-btn active">Token</button>
+              </div>
+            </div>
+            <div id="wave-legend" class="wave-legend"></div>
+            <div id="wave-box" class="wave-box"></div>
+          </div>
+        </section>
+
+        <!-- 使用记录 -->
+        <section class="view" id="view-usage">
+          <div class="stat-grid" id="usage-cards"></div>
+          <div class="card">
+            <div class="card-head usage-head">
+              <div class="seg" id="usage-tabs">
+                <button data-tab="detail" class="seg-btn active"><i data-ic="usage" data-ic-size="13"></i> 调用明细</button>
+                <button data-tab="models" class="seg-btn"><i data-ic="layers" data-ic-size="13"></i> 模型汇总</button>
+              </div>
+              <div class="usage-filters">
+                <select id="uf-model" class="input uf-select"><option value="">全部模型</option></select>
+                <div class="seg" id="uf-range">
+                  <button data-range="today" class="seg-btn">今日</button>
+                  <button data-range="7d" class="seg-btn">近7天</button>
+                  <button data-range="all" class="seg-btn active">全部</button>
+                </div>
+                <div class="seg" id="uf-status">
+                  <button data-status="" class="seg-btn active">全部</button>
+                  <button data-status="ok" class="seg-btn">成功</button>
+                  <button data-status="err" class="seg-btn">失败</button>
+                </div>
+                <button id="btn-usage-refresh" class="btn btn-small"><i data-ic="refresh" data-ic-size="13"></i>刷新</button>
+                <button id="btn-usage-clear" class="btn btn-small btn-danger"><i data-ic="trash" data-ic-size="13"></i>清空流水</button>
+              </div>
+            </div>
+            <div id="usage-detail"></div>
+            <div id="usage-models" style="display:none;"></div>
+            <div class="pg-bar" id="usage-pager"></div>
           </div>
         </section>
 
@@ -53,15 +121,15 @@
           <div class="tpl-layout">
             <div class="card tpl-list-card">
               <div class="card-head">
-                <h3>模板</h3>
-                <button id="btn-new" class="btn btn-small">+ 新建</button>
+                <h3><i data-ic="templates" data-ic-size="15"></i>模板</h3>
+                <button id="btn-new" class="btn btn-small"><i data-ic="plus" data-ic-size="13"></i>新建</button>
               </div>
-              <p class="hint">☑ 勾选=注入(可多选,按序拼接) · 点名字=编辑</p>
+              <p class="hint">勾选 = 注入(可多选,按序拼接)· 点名字 = 编辑</p>
               <div id="tpl-list" class="tpl-list"></div>
             </div>
             <div class="card tpl-editor-card">
               <div class="card-head">
-                <h3>编辑：<span id="edit-name">-</span><span id="edit-name-active" class="tag-on" style="display:none;margin-left:8px;">注入中</span></h3>
+                <h3>编辑:<span id="edit-name">-</span><span id="edit-name-active" class="tag-on" style="display:none;margin-left:8px;">注入中</span></h3>
                 <span id="edit-chars" class="muted">0 字</span>
               </div>
               <textarea id="editor" placeholder="编辑模板内容..."></textarea>
@@ -76,10 +144,10 @@
           </div>
         </section>
 
-        <!-- 上游 -->
+        <!-- 注入控制 -->
         <section class="view" id="view-upstream">
           <div class="card">
-            <h3>注入控制</h3>
+            <h3><i data-ic="inject" data-ic-size="15"></i>注入控制</h3>
             <div id="sections-banner" class="sections-banner" style="display:none;"></div>
             <div class="control-group">
               <label>接口格式</label>
@@ -88,22 +156,22 @@
                 <button data-format="openai" class="seg-btn">OpenAI</button>
                 <button data-format="responses" class="seg-btn">Responses</button>
               </div>
-              <p class="hint">须与 ZCode 选的接口格式一致。</p>
+              <p class="hint">须与客户端选的接口格式一致。</p>
             </div>
             <div class="control-group">
               <label>注入模式</label>
               <div class="seg">
                 <button data-mode="replace" class="seg-btn active">替换</button>
                 <button data-mode="prepend" class="seg-btn">前置</button>
-                <button data-mode="keepSections" class="seg-btn seg-keep">保留章节</button>
-                <button data-mode="official" class="seg-btn seg-official">官方</button>
+                <button data-mode="keepSections" class="seg-btn">保留章节</button>
+                <button data-mode="official" class="seg-btn">官方</button>
               </div>
-              <p class="hint">替换：丢弃原 system。前置：模板在前。保留章节：经文+勾选的官方章节。官方：不修改。</p>
+              <p class="hint">替换:丢弃原 system。前置:模板在前。保留章节:经文+勾选的官方章节。官方:不修改。</p>
             </div>
             <div class="control-group" id="sections-config" style="display:none;">
-              <label>保留章节（从最近抓取解析，勾选的追加到经文后）</label>
+              <label>保留章节(从最近抓取解析,勾选的追加到经文后)</label>
               <div id="sections-list" class="sections-list"></div>
-              <p class="hint" id="sections-hint">先发一条请求产生抓取，再回来勾选章节。</p>
+              <p class="hint" id="sections-hint">先发一条请求产生抓取,再回来勾选章节。</p>
             </div>
             <div class="control-group">
               <label class="switch">
@@ -114,7 +182,7 @@
             <div class="control-group">
               <label class="switch">
                 <input type="checkbox" id="toggle-capture" checked />
-                <span>抓取 system（关闭后代理仍转发，但不记录抓取）</span>
+                <span>抓取 system(关闭后代理仍转发,但不记录抓取)</span>
               </label>
             </div>
           </div>
@@ -124,24 +192,19 @@
         <section class="view" id="view-routing">
           <div class="card">
             <div class="card-head">
-              <h3>上游池 <span class="muted" style="font-size:11px;">(每个上游绑定自己的 Key + 模型列表)</span></h3>
-              <button id="btn-up-add" class="btn btn-small">+ 添加上游</button>
+              <h3><i data-ic="routing" data-ic-size="15"></i>上游池 <span class="muted" style="font-size:11px;font-weight:400;">(每个上游绑定自己的 Key + 模型列表)</span></h3>
+              <button id="btn-up-add" class="btn btn-small"><i data-ic="plus" data-ic-size="13"></i>添加上游</button>
             </div>
-            <table class="cap-table">
-              <thead>
-                <tr><th>名称</th><th>域名</th><th>端口</th><th>路径前缀</th><th>代理</th><th>模型路径</th><th>API Key</th><th>操作</th></tr>
-              </thead>
-              <tbody id="up-tbody"></tbody>
-            </table>
-            <p class="hint">每个上游绑定自己的 API Key（转发时用此 Key 认证）。点「拉取」按钮自动调用该上游的 <code>/models</code> 端点获取支持的模型列表（OpenAI 兼容协议，GLM/DeepSeek 等均支持）；拉取失败可手动在下方「模型」区编辑。</p>
+            <div id="up-cards" class="up-cards"></div>
+            <p class="hint">每个上游绑定自己的 API Key(转发时用此 Key 认证)。点「拉取」自动调用该上游的 <code>/models</code> 端点获取支持的模型列表(OpenAI 兼容协议);拉取失败可手动编辑。</p>
           </div>
           <div class="card">
             <div class="card-head">
-              <h3>模型映射 <span class="muted" style="font-size:11px;">(客户端 model 名 → 指定上游 + 真实模型名，精确匹配)</span></h3>
-              <button id="btn-mm-add" class="btn btn-small">+ 添加映射</button>
+              <h3><i data-ic="layers" data-ic-size="15"></i>模型映射 <span class="muted" style="font-size:11px;font-weight:400;">(客户端 model 名 → 指定上游 + 真实模型名,精确匹配)</span></h3>
+              <button id="btn-mm-add" class="btn btn-small"><i data-ic="plus" data-ic-size="13"></i>添加映射</button>
             </div>
             <div id="mm-list" class="rt-list"></div>
-            <p class="hint">客户端发的 <code>model</code> 精确等于「客户端名」即命中。每条映射可单独设置注入模式（留空则用全局模式）。每条映射可配多个候选上游，按顺序逐个尝试，连接失败/401/403/429/5xx 自动切下一个。「真实模型名」填写后转发时把请求体 model 改写成它；留空则原样转发。拖拽「⠿」调整候选顺序。未命中的请求会被拒绝（需先配映射）。</p>
+            <p class="hint">客户端发的 <code>model</code> 精确等于「客户端名」即命中。每条映射可单独设置注入模式(留空则用全局模式)。每条映射可配多个候选上游,按顺序逐个尝试,连接失败/401/403/429/5xx 自动切下一个。「真实模型名」填写后转发时把请求体 model 改写成它;留空则原样转发。拖拽把手调整候选顺序。未命中的请求会被拒绝(需先配映射)。</p>
           </div>
           <div class="editor-actions">
             <button id="btn-routing-save" class="btn btn-primary">保存配置</button>
@@ -153,10 +216,10 @@
         <section class="view" id="view-captures">
           <div class="card">
             <div class="card-head">
-              <h3>System 抓取 <span id="cap-count" class="muted"></span></h3>
+              <h3><i data-ic="captures" data-ic-size="15"></i>System 抓取 <span id="cap-count" class="muted"></span></h3>
               <div>
-                <button id="btn-cap-refresh" class="btn btn-small">刷新</button>
-                <button id="btn-cap-clear" class="btn btn-small btn-danger">清空</button>
+                <button id="btn-cap-refresh" class="btn btn-small"><i data-ic="refresh" data-ic-size="13"></i>刷新</button>
+                <button id="btn-cap-clear" class="btn btn-small btn-danger"><i data-ic="trash" data-ic-size="13"></i>清空</button>
               </div>
             </div>
             <table class="cap-table">
@@ -168,20 +231,20 @@
               </thead>
               <tbody id="cap-tbody"></tbody>
             </table>
-            <p id="cap-empty" class="muted center">暂无抓取记录。发一条请求后点「刷新」。</p>
+            <p id="cap-empty" class="muted center cap-empty">暂无抓取记录。发一条请求后点「刷新」。</p>
           </div>
           <div class="card" id="cap-detail-card" style="display:none;">
             <div class="card-head">
               <h3>详情 #<span id="cap-detail-seq"></span></h3>
-              <button id="btn-cap-detail-copy" class="btn btn-small">复制原始 system</button>
+              <button id="btn-cap-detail-copy" class="btn btn-small"><i data-ic="copy" data-ic-size="13"></i>复制原始 system</button>
             </div>
             <div class="cap-compare">
               <div class="cap-side">
-                <h4>原始 system <span id="cap-orig-len" class="muted"></span></h4>
+                <h4><i data-ic="eye" data-ic-size="14"></i>原始 system <span id="cap-orig-len" class="muted"></span></h4>
                 <pre id="cap-orig"></pre>
               </div>
               <div class="cap-side">
-                <h4>改写后 system <span id="cap-inj-len" class="muted"></span></h4>
+                <h4><i data-ic="inject" data-ic-size="14"></i>改写后 system <span id="cap-inj-len" class="muted"></span></h4>
                 <pre id="cap-inj"></pre>
               </div>
             </div>
@@ -191,17 +254,17 @@
         <!-- 设置 -->
         <section class="view" id="view-settings">
           <div class="card">
-            <h3>运行信息</h3>
+            <h3><i data-ic="settings" data-ic-size="15"></i>运行信息</h3>
             <div class="kv-list" id="settings-info"></div>
           </div>
           <div class="card">
-            <h3>使用方式</h3>
+            <h3><i data-ic="usage" data-ic-size="15"></i>使用方式</h3>
             <ol class="usage">
-              <li>双击 <code>启动.cmd</code> 启动代理（或 <code>node proxy.js</code>）。</li>
-              <li>ZCode 自定义 API 地址填：<code>http://127.0.0.1:8080</code>。</li>
-              <li>在「上游」配置目标后端域名/前缀。</li>
-              <li>在「模板」勾选要注入的模板。</li>
-              <li>在「System 抓取」查看每条请求的原始 system。</li>
+              <li>启动桌面客户端(或命令行 <code>node proxy.js</code>),代理常驻后台,关窗口自动最小化到托盘。</li>
+              <li>客户端自定义 API 地址填顶部的「代理地址」(点复制)。</li>
+              <li>在「路由」配置上游池与模型映射。</li>
+              <li>在「模板」勾选要注入的模板,在「注入」选择模式。</li>
+              <li>在「System 抓取」查看每条请求的原始/改写 system。</li>
             </ol>
           </div>
         </section>
@@ -209,9 +272,26 @@
     </div>
   </div>
 
+  <!-- 首屏按 hash 激活对应视图:内联同步执行,先于下方外部脚本下载,
+       从根上消除"刷新先闪概览再跳当前页"的问题 -->
+  <script>
+    (function () {
+      // 主题初始化:先于渲染设 data-theme,避免深色用户看到浅色闪一下
+      if (localStorage.getItem("sp-theme") === "dark")
+        document.documentElement.dataset.theme = "dark";
+      var v = (location.hash || "").replace(/^#/, "");
+      if (!document.getElementById("view-" + v)) v = "overview";
+      document.getElementById("view-" + v).classList.add("active");
+      var n = document.querySelector('.nav-item[data-view="' + v + '"]');
+      if (n) n.classList.add("active");
+    })();
+  </script>
+
   <!-- 按依赖顺序加载 -->
   <script src="/panel/api.js"></script>
+  <script src="/panel/icons.js"></script>
   <script src="/panel/views/overview.js"></script>
+  <script src="/panel/views/usage.js"></script>
   <script src="/panel/views/templates.js"></script>
   <script src="/panel/views/upstream.js"></script>
   <script src="/panel/views/routing.js"></script>
